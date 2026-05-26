@@ -18,21 +18,26 @@ export function h3BoundaryToLatLngs(
   return boundary.map(([lat, lng]) => [lat, lng]);
 }
 
-// Step sized to ~half an H3 cell edge at each resolution so the grid never
-// iterates more than ~10k points regardless of zoom.
+// Sample step sized to ~60% of each resolution's avg edge length for good
+// coverage. If the viewport is extremely large (country-level zoom), return
+// empty so we don't freeze the browser — hexagons are invisible at that scale.
 const RESOLUTION_STEP: Record<number, number> = {
-  5: 2.0,
-  6: 0.8,
-  7: 0.3,
-  8: 0.1,
-  9: 0.04,
+  5: 0.06,   // r5 edge ~9 km ≈ 0.08°
+  6: 0.018,  // r6 edge ~3 km ≈ 0.027°
+  7: 0.008,  // r7 edge ~1.3 km ≈ 0.012°
+  8: 0.003,  // r8 edge ~0.5 km ≈ 0.004°
+  9: 0.001,  // r9 edge ~0.18 km ≈ 0.0015°
 };
+const MAX_GRID_ITER = 200_000;
 
 export function viewportToH3Cells(
   bounds: ViewportBounds,
   resolution: number
 ): string[] {
-  const step = RESOLUTION_STEP[resolution] ?? 0.3;
+  const step = RESOLUTION_STEP[resolution] ?? 0.06;
+  const cols = Math.ceil((bounds.east - bounds.west) / step);
+  const rows = Math.ceil((bounds.north - bounds.south) / step);
+  if (cols * rows > MAX_GRID_ITER) return []; // viewport too large, skip
   const cells = new Set<string>();
   for (let lat = bounds.south; lat <= bounds.north; lat += step) {
     for (let lng = bounds.west; lng <= bounds.east; lng += step) {
