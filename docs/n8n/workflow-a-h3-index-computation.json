@@ -1,0 +1,97 @@
+{
+  "name": "H3 Index Computation",
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "nodes": [
+    {
+      "id": "wa-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "parameters": {}
+    },
+    {
+      "id": "wa-fetch-stores",
+      "name": "Fetch Stores Without H3",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "stores",
+        "returnAll": true,
+        "filters": {
+          "conditions": [
+            { "keyName": "h3_r7", "condition": "is", "keyValue": "null" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wa-split",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [680, 300],
+      "parameters": {
+        "batchSize": 200,
+        "options": {}
+      }
+    },
+    {
+      "id": "wa-compute",
+      "name": "Compute H3 Indexes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const h3 = require('h3-js');\n\nreturn $input.all().map(item => {\n  const { id, latitude, longitude, company_id } = item.json;\n  const lat = parseFloat(latitude);\n  const lng = parseFloat(longitude);\n  if (!id || isNaN(lat) || isNaN(lng)) return null;\n\n  return {\n    json: {\n      store_id: id,\n      company_id,\n      h3_r5: h3.latLngToCell(lat, lng, 5),\n      h3_r7: h3.latLngToCell(lat, lng, 7),\n      h3_r9: h3.latLngToCell(lat, lng, 9),\n    }\n  };\n}).filter(Boolean);"
+      }
+    },
+    {
+      "id": "wa-update",
+      "name": "Update Store H3 Columns",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1120, 300],
+      "parameters": {
+        "operation": "update",
+        "tableId": "stores",
+        "filters": {
+          "conditions": [
+            { "keyName": "id", "condition": "eq", "keyValue": "={{ $json.store_id }}" }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "h3_r5", "fieldValue": "={{ $json.h3_r5 }}" },
+            { "fieldId": "h3_r7", "fieldValue": "={{ $json.h3_r7 }}" },
+            { "fieldId": "h3_r9", "fieldValue": "={{ $json.h3_r9 }}" }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Fetch Stores Without H3", "type": "main", "index": 0 }]]
+    },
+    "Fetch Stores Without H3": {
+      "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]]
+    },
+    "Split In Batches": {
+      "main": [
+        [],
+        [{ "node": "Compute H3 Indexes", "type": "main", "index": 0 }]
+      ]
+    },
+    "Compute H3 Indexes": {
+      "main": [[{ "node": "Update Store H3 Columns", "type": "main", "index": 0 }]]
+    },
+    "Update Store H3 Columns": {
+      "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]]
+    }
+  }
+}

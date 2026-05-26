@@ -1,0 +1,141 @@
+{
+  "name": "H3 Aggregation",
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "nodes": [
+    {
+      "id": "wb-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "parameters": {}
+    },
+    {
+      "id": "wb-fetch-stores",
+      "name": "Fetch All Stores",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [460, 180],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "stores",
+        "returnAll": true
+      }
+    },
+    {
+      "id": "wb-fetch-insights",
+      "name": "Fetch All Store Insights",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [460, 420],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "store_insights",
+        "returnAll": true
+      }
+    },
+    {
+      "id": "wb-merge",
+      "name": "Merge Stores and Insights",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [700, 300],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "id": "wb-aggregate",
+      "name": "Join and Aggregate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [940, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\n\n// Separate stores from store_insights by field presence\n// stores have h3_r7 column; store_insights have store_id + categories\nconst stores = items.filter(i => typeof i.json.h3_r7 !== 'undefined');\nconst insightsMap = new Map(\n  items\n    .filter(i => typeof i.json.store_id !== 'undefined' && typeof i.json.categories !== 'undefined')\n    .map(i => [i.json.store_id, i.json])\n);\n\nconst WEIGHTS = { high: 1.0, medium: 0.6, low: 0.3 };\n\nfunction extractWeighted(jsonb, weights) {\n  if (!jsonb || typeof jsonb !== 'object') return [];\n  const out = [];\n  for (const [tier, w] of Object.entries(weights)) {\n    const key = tier + '_confidence';\n    for (const item of (Array.isArray(jsonb[key]) ? jsonb[key] : []))\n      out.push({ name: String(item), weight: w });\n  }\n  return out;\n}\n\nconst cellMap = new Map();\n\nfunction getCell(h3Index, resolution, company_id) {\n  const key = `${h3Index}::${resolution}::${company_id}`;\n  if (!cellMap.has(key)) {\n    cellMap.set(key, {\n      h3_index: h3Index,\n      resolution,\n      company_id,\n      store_count: 0,\n      ratings: [],\n      categoryScores: {},\n      brandScores: {},\n      dominantVotes: {}\n    });\n  }\n  return cellMap.get(key);\n}\n\nfor (const { json: store } of stores) {\n  const { id, company_id, avg_rating, h3_r5, h3_r7, h3_r9 } = store;\n  if (!company_id) continue;\n  const rating = avg_rating != null ? parseFloat(avg_rating) : null;\n  const insight = insightsMap.get(id) || null;\n\n  for (const [h3Index, resolution] of [[h3_r5, 5], [h3_r7, 7], [h3_r9, 9]]) {\n    if (!h3Index) continue;\n    const cell = getCell(h3Index, resolution, company_id);\n    cell.store_count++;\n    if (rating !== null && !isNaN(rating)) cell.ratings.push(rating);\n\n    if (insight) {\n      if (insight.dominant_category)\n        cell.dominantVotes[insight.dominant_category] =\n          (cell.dominantVotes[insight.dominant_category] || 0) + 1;\n\n      for (const { name, weight } of extractWeighted(insight.categories, WEIGHTS))\n        cell.categoryScores[name] = (cell.categoryScores[name] || 0) + weight;\n\n      for (const { name, weight } of extractWeighted(insight.brands, WEIGHTS))\n        cell.brandScores[name] = (cell.brandScores[name] || 0) + weight;\n    }\n  }\n}\n\n// Whitespace: P95-relative density × rating-pressure\n// P95 is the 95th-percentile store count across all cells in this run.\n// This makes the ceiling data-relative — no hardcoded max.\nconst counts = Array.from(cellMap.values()).map(c => c.store_count).sort((a, b) => a - b);\nconst p95 = counts[Math.floor(counts.length * 0.95)] || counts[counts.length - 1] || 1;\n\nfunction whitespace(storeCount, ratings) {\n  const density = Math.min(storeCount / p95, 1.0);\n  const avgRating = ratings.length\n    ? ratings.reduce((a, b) => a + b, 0) / ratings.length\n    : 0;\n  // rating_pressure: 0.8–1.0. High-rated cells have stronger competition → lower whitespace.\n  const pressure = 1 - 0.2 * (avgRating / 5.0);\n  return Math.round(Math.max(0, Math.min(100, 100 * (1 - density) * pressure)) * 10) / 10;\n}\n\nreturn Array.from(cellMap.values()).map(cell => {\n  const avgRating = cell.ratings.length\n    ? Math.round(cell.ratings.reduce((a, b) => a + b, 0) / cell.ratings.length * 100) / 100\n    : null;\n\n  // dominant_category: category with the most votes across stores in the cell\n  const dominantEntry = Object.entries(cell.dominantVotes).sort((a, b) => b[1] - a[1])[0];\n  const dominant_category = dominantEntry ? dominantEntry[0] : null;\n\n  // category_mix: normalise weighted scores to 0–1 relative to the highest scorer\n  const maxCat = Math.max(...Object.values(cell.categoryScores), 1);\n  const category_mix = Object.fromEntries(\n    Object.entries(cell.categoryScores)\n      .map(([k, v]) => [k, Math.round(v / maxCat * 1000) / 1000])\n  );\n\n  // brand_penetration: normalise weighted scores to 0–1 relative to the highest scorer\n  const maxBrand = Math.max(...Object.values(cell.brandScores), 1);\n  const brand_penetration = Object.fromEntries(\n    Object.entries(cell.brandScores)\n      .map(([k, v]) => [k, Math.round(v / maxBrand * 1000) / 1000])\n  );\n\n  return {\n    json: {\n      h3_index: cell.h3_index,\n      resolution: cell.resolution,\n      company_id: cell.company_id,\n      store_count: cell.store_count,\n      avg_rating: avgRating,\n      dominant_category,\n      brand_penetration,\n      category_mix,\n      whitespace_score: whitespace(cell.store_count, cell.ratings)\n    }\n  };\n});"
+      }
+    },
+    {
+      "id": "wb-split-upsert",
+      "name": "Split For Upsert",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1180, 300],
+      "parameters": {
+        "batchSize": 100,
+        "options": {}
+      }
+    },
+    {
+      "id": "wb-pack",
+      "name": "Pack Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1420, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const records = $input.all().map(i => i.json);\nreturn [{ json: { records } }];"
+      }
+    },
+    {
+      "id": "wb-upsert",
+      "name": "Upsert H3 Insights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1660, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/h3_insights",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey",        "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}" },
+            { "name": "Content-Type",  "value": "application/json" },
+            { "name": "Prefer",        "value": "resolution=merge-duplicates,return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.records }}"
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          { "node": "Fetch All Stores",        "type": "main", "index": 0 },
+          { "node": "Fetch All Store Insights", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch All Stores": {
+      "main": [[{ "node": "Merge Stores and Insights", "type": "main", "index": 0 }]]
+    },
+    "Fetch All Store Insights": {
+      "main": [[{ "node": "Merge Stores and Insights", "type": "main", "index": 1 }]]
+    },
+    "Merge Stores and Insights": {
+      "main": [[{ "node": "Join and Aggregate", "type": "main", "index": 0 }]]
+    },
+    "Join and Aggregate": {
+      "main": [[{ "node": "Split For Upsert", "type": "main", "index": 0 }]]
+    },
+    "Split For Upsert": {
+      "main": [
+        [],
+        [{ "node": "Pack Batch", "type": "main", "index": 0 }]
+      ]
+    },
+    "Pack Batch": {
+      "main": [[{ "node": "Upsert H3 Insights", "type": "main", "index": 0 }]]
+    },
+    "Upsert H3 Insights": {
+      "main": [[{ "node": "Split For Upsert", "type": "main", "index": 0 }]]
+    }
+  }
+}
