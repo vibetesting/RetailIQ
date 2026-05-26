@@ -1,6 +1,4 @@
-import dynamic from "next/dynamic";
-
-const MapLayout = dynamic(() => import("@/components/map/MapLayout"), { ssr: false });
+import MapLayout from "@/components/map/MapLayout";
 
 export default function MapPage() {
   return (
