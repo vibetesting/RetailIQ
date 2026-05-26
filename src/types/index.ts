@@ -57,3 +57,41 @@ export interface ViewportBounds {
   east: number;
   west: number;
 }
+
+export interface StoreFilters {
+  state: string;
+  city: string;
+  storeTypes: string[];
+  brandsIdentified: "any" | "yes" | "no";
+  categoriesIdentified: "any" | "yes" | "no";
+  categories: string[];
+  brands: string[];
+  assets: string[];
+  confidence: string[];
+  minRating: number | null;
+  maxRating: number | null;
+  minReviews: number | null;
+}
+
+export const DEFAULT_FILTERS: StoreFilters = {
+  state: "",
+  city: "",
+  storeTypes: [],
+  brandsIdentified: "any",
+  categoriesIdentified: "any",
+  categories: [],
+  brands: [],
+  assets: [],
+  confidence: [],
+  minRating: null,
+  maxRating: null,
+  minReviews: null,
+};
+
+export interface FilterOptions {
+  states: string[];
+  cities: string[];
+  storeTypes: string[];
+  categories: string[];
+  brands: string[];
+}
