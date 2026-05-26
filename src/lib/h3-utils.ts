@@ -18,12 +18,21 @@ export function h3BoundaryToLatLngs(
   return boundary.map(([lat, lng]) => [lat, lng]);
 }
 
+// Step sized to ~half an H3 cell edge at each resolution so the grid never
+// iterates more than ~10k points regardless of zoom.
+const RESOLUTION_STEP: Record<number, number> = {
+  5: 2.0,
+  6: 0.8,
+  7: 0.3,
+  8: 0.1,
+  9: 0.04,
+};
+
 export function viewportToH3Cells(
   bounds: ViewportBounds,
   resolution: number
 ): string[] {
-  // Sample grid points across the viewport and collect unique H3 cells
-  const step = 0.05;
+  const step = RESOLUTION_STEP[resolution] ?? 0.3;
   const cells = new Set<string>();
   for (let lat = bounds.south; lat <= bounds.north; lat += step) {
     for (let lng = bounds.west; lng <= bounds.east; lng += step) {
