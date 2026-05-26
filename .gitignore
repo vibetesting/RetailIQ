@@ -32,3 +32,9 @@ next-env.d.ts
 
 # Claude Code local overrides — contains API keys
 .claude/settings.local.json
+
+# Deployment scripts — contain hardcoded API keys, not for source control
+scripts/
+
+# Supabase temp files
+supabase/.temp/
