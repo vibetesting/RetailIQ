@@ -27,19 +27,23 @@ function StoreLoader({
   filters,
   onStores,
   onCountChange,
+  onLoadingChange,
 }: {
   companyId?: string;
   filters: StoreFilters;
   onStores: (stores: Store[]) => void;
   onCountChange: (filtered: number, total: number) => void;
+  onLoadingChange: (loading: boolean) => void;
 }) {
   const map = useMap();
   const controllerRef = useRef<AbortController | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const fetchStores = useCallback(async () => {
     controllerRef.current?.abort();
     controllerRef.current = new AbortController();
     const b = map.getBounds();
+    onLoadingChange(true);
     try {
       const params = new URLSearchParams({
         north: String(b.getNorth()),
@@ -61,45 +65,35 @@ function StoreLoader({
         ...(filters.confidence.length ? { confidence: filters.confidence.join(",") } : {}),
       });
 
-      // Fetch filtered count
-      const filteredRes = await fetch(`/api/stores?${params}`, {
+      const res = await fetch(`/api/stores?${params}`, {
         signal: controllerRef.current.signal,
       });
-      if (!filteredRes.ok) return;
-      const filteredStores: Store[] = await filteredRes.json();
-      onStores(filteredStores);
-
-      // Fetch total (no joined filters) for the "N of M" counter
-      const totalParams = new URLSearchParams({
-        north: String(b.getNorth()),
-        south: String(b.getSouth()),
-        east: String(b.getEast()),
-        west: String(b.getWest()),
-        ...(companyId ? { company_id: companyId } : {}),
-        ...(filters.state ? { state: filters.state } : {}),
-        ...(filters.city ? { city: filters.city } : {}),
-        ...(filters.minRating !== null ? { min_rating: String(filters.minRating) } : {}),
-        ...(filters.maxRating !== null ? { max_rating: String(filters.maxRating) } : {}),
-        ...(filters.minReviews !== null ? { min_reviews: String(filters.minReviews) } : {}),
-      });
-      const totalRes = await fetch(`/api/stores?${totalParams}`, {
-        signal: controllerRef.current.signal,
-      });
-      if (!totalRes.ok) return;
-      const totalStores: Store[] = await totalRes.json();
-      onCountChange(filteredStores.length, totalStores.length);
+      if (!res.ok) return;
+      const stores: Store[] = await res.json();
+      onStores(stores);
+      onCountChange(stores.length, stores.length);
     } catch (err: unknown) {
       if (err instanceof Error && err.name !== "AbortError")
         console.error("Store fetch error:", err);
+    } finally {
+      onLoadingChange(false);
     }
-  }, [map, companyId, filters, onStores, onCountChange]);
+  }, [map, companyId, filters, onStores, onCountChange, onLoadingChange]);
+
+  const debouncedFetch = useCallback(() => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(fetchStores, 300);
+  }, [fetchStores]);
 
   useEffect(() => {
     fetchStores();
-    return () => { controllerRef.current?.abort(); };
+    return () => {
+      controllerRef.current?.abort();
+      clearTimeout(debounceRef.current);
+    };
   }, [fetchStores]);
 
-  useMapEvents({ moveend: fetchStores });
+  useMapEvents({ moveend: debouncedFetch });
 
   return null;
 }
@@ -118,7 +112,10 @@ export default function MapContainer({
   const [stores, setStores] = useState<Store[]>([]);
   const [lassoActive, setLassoActive] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [storesLoading, setStoresLoading] = useState(false);
+  const [hexLoading, setHexLoading] = useState(false);
 
+  const isLoading = storesLoading || hexLoading;
   const isHeatmap = activeLayer !== "stores";
 
   const handleLassoSelection = useCallback(
@@ -131,10 +128,8 @@ export default function MapContainer({
 
   const handleToggleLasso = useCallback(() => {
     if (lassoActive) {
-      // cancel lasso
       setLassoActive(false);
     } else {
-      // clear previous lasso selection and start new
       onLassoChange(null);
       setLassoActive(true);
     }
@@ -169,14 +164,19 @@ export default function MapContainer({
     }
   }, [lassoedIds, stores]);
 
-  // Display stores: if lasso active, highlight lassoed; otherwise show all
-  const displayStores =
-    lassoedIds !== null
-      ? stores.filter((s) => lassoedIds.includes(s.id))
-      : stores;
+  const displayStores = lassoedIds !== null
+    ? stores.filter((s) => lassoedIds.includes(s.id))
+    : stores;
 
   return (
     <div className="relative w-full h-full">
+      {/* Loading bar */}
+      {isLoading && (
+        <div className="absolute top-0 left-0 right-0 z-[1001] h-0.5 overflow-hidden">
+          <div className="h-full bg-blue-500 animate-[loadbar_1.2s_ease-in-out_infinite]" />
+        </div>
+      )}
+
       <LeafletMapContainer
         center={DEFAULT_CENTER}
         zoom={DEFAULT_ZOOM}
@@ -192,10 +192,15 @@ export default function MapContainer({
           filters={filters}
           onStores={setStores}
           onCountChange={onStoreCountChange}
+          onLoadingChange={setStoresLoading}
         />
 
         {isHeatmap && (
-          <H3HexLayer companyId={companyId} activeLayer={activeLayer} />
+          <H3HexLayer
+            companyId={companyId}
+            activeLayer={activeLayer}
+            onLoadingChange={setHexLoading}
+          />
         )}
 
         {showStores && <StoreMarkers stores={displayStores} />}
@@ -220,6 +225,7 @@ export default function MapContainer({
         lassoedCount={lassoedIds !== null ? lassoedIds.length : null}
         onExport={handleExport}
         exporting={exporting}
+        isLoading={isLoading}
       />
     </div>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useMap } from "react-leaflet";
 import L from "leaflet";
 import type { Store } from "@/types";
@@ -26,48 +26,49 @@ function pointInPolygon(lat: number, lng: number, ring: [number, number][]): boo
 
 export default function LassoLayer({ isActive, stores, onSelectionChange, onDeactivate }: LassoLayerProps) {
   const map = useMap();
-  const [points, setPoints] = useState<[number, number][]>([]);
+
+  // Keep latest stores in a ref so the drawing effect never needs stores as a dep
+  const storesRef = useRef<Store[]>(stores);
+  useEffect(() => { storesRef.current = stores; }, [stores]);
+
+  // Stable refs for callbacks so the drawing effect is stable
+  const onSelectionRef = useRef(onSelectionChange);
+  useEffect(() => { onSelectionRef.current = onSelectionChange; }, [onSelectionChange]);
+  const onDeactivateRef = useRef(onDeactivate);
+  useEffect(() => { onDeactivateRef.current = onDeactivate; }, [onDeactivate]);
+
+  // Drawing state — all refs, no React state so clicks never trigger re-renders
   const polygonRef = useRef<L.Polygon | null>(null);
   const pointsRef = useRef<[number, number][]>([]);
 
-  // Keep ref in sync for event handlers
-  useEffect(() => {
-    pointsRef.current = points;
-  }, [points]);
-
   useEffect(() => {
     if (!isActive) {
-      // Clean up polygon and reset
       if (polygonRef.current) {
         polygonRef.current.remove();
         polygonRef.current = null;
       }
-      setPoints([]);
+      pointsRef.current = [];
       return;
     }
 
-    // Enter drawing mode
     const container = map.getContainer();
     container.style.cursor = "crosshair";
     map.dragging.disable();
     map.doubleClickZoom.disable();
 
     const handleClick = (e: L.LeafletMouseEvent) => {
-      // Prevent event from propagating to map zoom/pan
       L.DomEvent.stopPropagation(e);
       const { lat, lng } = e.latlng;
-      const newPoints: [number, number][] = [...pointsRef.current, [lat, lng]];
-      setPoints(newPoints);
+      pointsRef.current = [...pointsRef.current, [lat, lng]];
 
-      // Draw/update polygon preview
       if (polygonRef.current) {
-        polygonRef.current.setLatLngs(newPoints);
+        polygonRef.current.setLatLngs(pointsRef.current);
       } else {
-        polygonRef.current = L.polygon(newPoints, {
+        polygonRef.current = L.polygon(pointsRef.current as [number, number][], {
           color: "#3b82f6",
           weight: 2,
           dashArray: "6 4",
-          fillOpacity: 0.1,
+          fillOpacity: 0.08,
           fillColor: "#3b82f6",
         }).addTo(map);
       }
@@ -77,16 +78,16 @@ export default function LassoLayer({ isActive, stores, onSelectionChange, onDeac
       L.DomEvent.stopPropagation(e);
       const ring = pointsRef.current;
       if (ring.length >= 3) {
-        const selectedIds = stores
+        const selectedIds = storesRef.current
           .filter((s) => pointInPolygon(s.latitude, s.longitude, ring))
           .map((s) => s.id);
-        onSelectionChange(selectedIds);
+        onSelectionRef.current(selectedIds);
       }
-      onDeactivate();
+      onDeactivateRef.current();
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onDeactivate();
+      if (e.key === "Escape") onDeactivateRef.current();
     };
 
     map.on("click", handleClick);
@@ -104,8 +105,9 @@ export default function LassoLayer({ isActive, stores, onSelectionChange, onDeac
         polygonRef.current.remove();
         polygonRef.current = null;
       }
+      pointsRef.current = [];
     };
-  }, [isActive, map, stores, onSelectionChange, onDeactivate]);
+  }, [isActive, map]); // stores intentionally NOT here — use storesRef instead
 
   return null;
 }

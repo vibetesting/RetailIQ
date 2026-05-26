@@ -21,13 +21,20 @@ interface MapLayoutProps {
 }
 
 export default function MapLayout({ companyId }: MapLayoutProps) {
+  // filters drives the UI immediately; debouncedFilters drives the API (400ms delay)
   const [filters, setFilters] = useState<StoreFilters>(DEFAULT_FILTERS);
+  const [debouncedFilters, setDebouncedFilters] = useState<StoreFilters>(DEFAULT_FILTERS);
   const [filterOptions, setFilterOptions] = useState<FilterOptions>(EMPTY_OPTIONS);
   const [storeCount, setStoreCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [lassoedIds, setLassoedIds] = useState<string[] | null>(null);
 
-  // Fetch filter options once on mount
+  // Debounce filter changes — API calls fire 400ms after the last change
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedFilters(filters), 400);
+    return () => clearTimeout(t);
+  }, [filters]);
+
   useEffect(() => {
     const params = companyId ? `?company_id=${companyId}` : "";
     fetch(`/api/filter-options${params}`)
@@ -55,7 +62,7 @@ export default function MapLayout({ companyId }: MapLayoutProps) {
       <div className="flex-1 relative min-w-0">
         <MapContainer
           companyId={companyId}
-          filters={filters}
+          filters={debouncedFilters}
           onStoreCountChange={handleStoreCountChange}
           onLassoChange={handleLassoChange}
           lassoedIds={lassoedIds}
