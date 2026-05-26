@@ -1,0 +1,112 @@
+{
+  "name": "H3 Spatial Aggregation",
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "nodes": [
+    {
+      "id": "node-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "parameters": {}
+    },
+    {
+      "id": "node-fetch-stores",
+      "name": "Fetch All Stores",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "stores",
+        "returnAll": true
+      }
+    },
+    {
+      "id": "node-compute-h3",
+      "name": "Compute H3 Per Store",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Calls Supabase Edge Function to compute H3 indexes\nconst SUPABASE_URL = 'https://nyiqzfpirtsozxvdnord.supabase.co';\nconst SERVICE_KEY = $env.SUPABASE_SERVICE_KEY ?? '';\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const { id, latitude, longitude, company_id } = item.json;\n  if (!latitude || !longitude) continue;\n\n  try {\n    const res = await fetch(SUPABASE_URL + '/functions/v1/compute-h3', {\n      method: 'POST',\n      headers: {\n        'Authorization': 'Bearer ' + SERVICE_KEY,\n        'Content-Type': 'application/json',\n      },\n      body: JSON.stringify({ store_id: id, latitude, longitude }),\n    });\n\n    const data = await res.json();\n    results.push({\n      json: {\n        store_id: id,\n        company_id,\n        latitude: parseFloat(latitude),\n        longitude: parseFloat(longitude),\n        h3_r5: data.h3_r5,\n        h3_r7: data.h3_r7,\n        h3_r9: data.h3_r9,\n      }\n    });\n  } catch (e) {\n    // Skip failed stores — they can be retried next run\n    console.error(`H3 failed for ${id}: ${e.message}`);\n  }\n}\n\nreturn results;"
+      }
+    },
+    {
+      "id": "node-update-h3",
+      "name": "Update Store H3 Columns",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "parameters": {
+        "operation": "update",
+        "tableId": "stores",
+        "filters": {
+          "conditions": [
+            { "keyName": "id", "condition": "eq", "keyValue": "={{ $json.store_id }}" }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "h3_r5", "fieldValue": "={{ $json.h3_r5 }}" },
+            { "fieldId": "h3_r7", "fieldValue": "={{ $json.h3_r7 }}" },
+            { "fieldId": "h3_r9", "fieldValue": "={{ $json.h3_r9 }}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-aggregate",
+      "name": "Aggregate by H3 Cell",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Group stores by h3_r7 and compute whitespace / density per cell\nconst items = $input.all();\nconst cellMap = {};\n\nfor (const item of items) {\n  const { h3_r7, company_id, avg_rating } = item.json;\n  if (!h3_r7 || !company_id) continue;\n\n  const key = `${h3_r7}::${company_id}`;\n  if (!cellMap[key]) {\n    cellMap[key] = {\n      h3_index: h3_r7,\n      resolution: 7,\n      company_id,\n      store_count: 0,\n      ratings: [],\n    };\n  }\n\n  cellMap[key].store_count++;\n  if (avg_rating) cellMap[key].ratings.push(parseFloat(avg_rating));\n}\n\nreturn Object.values(cellMap).map(cell => {\n  const avgRating = cell.ratings.length > 0\n    ? cell.ratings.reduce((a, b) => a + b, 0) / cell.ratings.length\n    : null;\n\n  // Whitespace = inverse of density (scale 0-100)\n  // High score = low competition = high opportunity\n  const maxDensityPerCell = 20;\n  const whitespaceScore = Math.max(0, Math.round(100 - (cell.store_count / maxDensityPerCell) * 100));\n\n  return {\n    json: {\n      h3_index: cell.h3_index,\n      resolution: cell.resolution,\n      company_id: cell.company_id,\n      store_count: cell.store_count,\n      avg_rating: avgRating ? parseFloat(avgRating.toFixed(2)) : null,\n      brand_penetration: {},\n      category_mix: {},\n      whitespace_score: whitespaceScore,\n    }\n  };\n});"
+      }
+    },
+    {
+      "id": "node-upsert",
+      "name": "Upsert H3 Insights",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1340, 300],
+      "parameters": {
+        "operation": "upsert",
+        "tableId": "h3_insights",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "h3_index", "fieldValue": "={{ $json.h3_index }}" },
+            { "fieldId": "resolution", "fieldValue": "={{ $json.resolution }}" },
+            { "fieldId": "company_id", "fieldValue": "={{ $json.company_id }}" },
+            { "fieldId": "store_count", "fieldValue": "={{ $json.store_count }}" },
+            { "fieldId": "avg_rating", "fieldValue": "={{ $json.avg_rating }}" },
+            { "fieldId": "brand_penetration", "fieldValue": "={{ JSON.stringify($json.brand_penetration) }}" },
+            { "fieldId": "category_mix", "fieldValue": "={{ JSON.stringify($json.category_mix) }}" },
+            { "fieldId": "whitespace_score", "fieldValue": "={{ $json.whitespace_score }}" }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Fetch All Stores", "type": "main", "index": 0 }]]
+    },
+    "Fetch All Stores": {
+      "main": [[{ "node": "Compute H3 Per Store", "type": "main", "index": 0 }]]
+    },
+    "Compute H3 Per Store": {
+      "main": [[{ "node": "Update Store H3 Columns", "type": "main", "index": 0 }]]
+    },
+    "Update Store H3 Columns": {
+      "main": [[{ "node": "Aggregate by H3 Cell", "type": "main", "index": 0 }]]
+    },
+    "Aggregate by H3 Cell": {
+      "main": [[{ "node": "Upsert H3 Insights", "type": "main", "index": 0 }]]
+    }
+  }
+}

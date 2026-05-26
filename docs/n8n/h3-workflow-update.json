@@ -1,0 +1,85 @@
+{
+  "name": "H3 Spatial Aggregation",
+  "settings": { "executionOrder": "v1" },
+  "nodes": [
+    {
+      "id": "a1b2c3d4",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "parameters": {}
+    },
+    {
+      "id": "b2c3d4e5",
+      "name": "Fetch All Stores",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "stores",
+        "returnAll": true
+      }
+    },
+    {
+      "id": "c3d4e5f6",
+      "name": "Compute H3 Per Store",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const SUPABASE_URL = 'https://nyiqzfpirtsozxvdnord.supabase.co';\nconst SERVICE_KEY = $env.SUPABASE_SERVICE_KEY || '';\nconst items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const { id, latitude, longitude, company_id } = item.json;\n  if (!latitude || !longitude) continue;\n  try {\n    const res = await fetch(SUPABASE_URL + '/functions/v1/compute-h3', {\n      method: 'POST',\n      headers: { 'Authorization': 'Bearer ' + SERVICE_KEY, 'Content-Type': 'application/json' },\n      body: JSON.stringify({ store_id: id, latitude, longitude }),\n    });\n    const data = await res.json();\n    results.push({ json: { store_id: id, company_id, h3_r5: data.h3_r5, h3_r7: data.h3_r7, h3_r9: data.h3_r9 } });\n  } catch (e) {\n    console.error('H3 failed for ' + id + ': ' + e.message);\n  }\n}\nreturn results;"
+      }
+    },
+    {
+      "id": "d4e5f6g7",
+      "name": "Aggregate by H3 Cell",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst cellMap = {};\nfor (const item of items) {\n  const { h3_r7, company_id } = item.json;\n  if (!h3_r7 || !company_id) continue;\n  const key = h3_r7 + '::' + company_id;\n  if (!cellMap[key]) { cellMap[key] = { h3_index: h3_r7, resolution: 7, company_id, store_count: 0 }; }\n  cellMap[key].store_count++;\n}\nreturn Object.values(cellMap).map(cell => ({\n  json: {\n    h3_index: cell.h3_index,\n    resolution: cell.resolution,\n    company_id: cell.company_id,\n    store_count: cell.store_count,\n    avg_rating: null,\n    brand_penetration: {},\n    category_mix: {},\n    whitespace_score: Math.max(0, Math.round(100 - (cell.store_count / 20) * 100))\n  }\n}));"
+      }
+    },
+    {
+      "id": "e5f6g7h8",
+      "name": "Upsert H3 Insights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://nyiqzfpirtsozxvdnord.supabase.co/rest/v1/h3_insights",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_ANON_KEY }}" },
+            { "name": "Authorization", "value": "Bearer {{ $env.SUPABASE_SERVICE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "resolution=merge-duplicates" }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "body": "={{ $json }}"
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Fetch All Stores", "type": "main", "index": 0 }]]
+    },
+    "Fetch All Stores": {
+      "main": [[{ "node": "Compute H3 Per Store", "type": "main", "index": 0 }]]
+    },
+    "Compute H3 Per Store": {
+      "main": [[{ "node": "Aggregate by H3 Cell", "type": "main", "index": 0 }]]
+    },
+    "Aggregate by H3 Cell": {
+      "main": [[{ "node": "Upsert H3 Insights", "type": "main", "index": 0 }]]
+    }
+  }
+}
