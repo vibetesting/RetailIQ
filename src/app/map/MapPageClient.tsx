@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Activity, Map, AlertTriangle } from "lucide-react";
 import MapLayout from "@/components/map/MapLayout";
 import StoreDetailDrawer from "@/components/map/StoreDetailDrawer";
@@ -21,13 +21,13 @@ export default function MapPageClient() {
   const syncStores = useDataStore((s) => s.syncStores);
   const syncError = useDataStore((s) => s.syncError);
 
+  // Guard against double-firing in React Strict Mode (dev) and ensure we
+  // only sync once per mount even if the component re-renders before the
+  // Zustand persist hydration completes.
+  const syncedRef = useRef(false);
   useEffect(() => {
-    // Trigger localStorage rehydration (skipped during SSR via skipHydration: true)
-    useDataStore.persist.rehydrate();
-  }, []);
-
-  useEffect(() => {
-    // Sync on mount if cache is empty or stale — runs after rehydration
+    if (syncedRef.current) return;
+    syncedRef.current = true;
     const isStale =
       lastSyncedAt !== null && Date.now() - lastSyncedAt > STALE_THRESHOLD_MS;
     if (allStores === null || isStale) {

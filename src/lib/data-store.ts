@@ -11,9 +11,6 @@ interface DataState {
   clearCache: () => void;
 }
 
-// Safe localStorage access — returns a no-op stub during SSR.
-// createJSONStorage calls this factory lazily on each access, so the
-// typeof window check fires at the right time (client vs server).
 const storageFactory = () => {
   if (typeof window === "undefined") {
     return {
@@ -28,7 +25,7 @@ const storageFactory = () => {
       try {
         localStorage.setItem(k, v);
       } catch {
-        console.warn("[data-store] localStorage quota exceeded — cache not persisted");
+        console.warn("[data-store] localStorage quota exceeded");
       }
     },
     removeItem: (k: string) => localStorage.removeItem(k),
@@ -45,17 +42,23 @@ export const useDataStore = create<DataState>()(
 
       syncStores: async (companyId?: string) => {
         set({ isSyncing: true, syncError: null });
+        // 25-second timeout so the UI never spins forever
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 25_000);
         try {
           const params = companyId ? `?company_id=${encodeURIComponent(companyId)}` : "";
-          const res = await fetch(`/api/stores/all${params}`);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const res = await fetch(`/api/stores/all${params}`, { signal: controller.signal });
+          clearTimeout(timer);
+          if (!res.ok) throw new Error(`Server error ${res.status}`);
           const stores: CachedStore[] = await res.json();
           set({ allStores: stores, lastSyncedAt: Date.now(), isSyncing: false });
         } catch (err) {
-          set({
-            syncError: err instanceof Error ? err.message : "Sync failed",
-            isSyncing: false,
-          });
+          clearTimeout(timer);
+          const msg =
+            err instanceof Error
+              ? err.name === "AbortError" ? "Request timed out after 25s" : err.message
+              : "Sync failed";
+          set({ syncError: msg, isSyncing: false });
         }
       },
 
@@ -70,9 +73,6 @@ export const useDataStore = create<DataState>()(
       }),
       version: 1,
       migrate: () => ({ allStores: null, lastSyncedAt: null }),
-      // Prevent SSR/client hydration mismatch — the server never has localStorage
-      // data, so skip server-side rehydration entirely and let the client do it.
-      skipHydration: true,
     },
   ),
 );
