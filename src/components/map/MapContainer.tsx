@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { MapContainer as LeafletMapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import {
+  MapContainer as LeafletMapContainer,
+  TileLayer,
+  useMap,
+  useMapEvents,
+} from "react-leaflet";
+import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import type { Store, StoreTypeAnalysis, StoreFilters } from "@/types";
 import H3HexLayer from "./H3HexLayer";
@@ -21,6 +27,55 @@ interface MapContainerProps {
 const DEFAULT_CENTER: [number, number] = [20.5937, 78.9629];
 const DEFAULT_ZOOM = 5;
 
+// ── Overlay tile layers (roads / railways / waterways) ────────────────────────
+const TILE_DEFS = {
+  roads: {
+    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attr: "© OpenStreetMap",
+  },
+  railways: {
+    url: "https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png",
+    attr: "© OpenRailwayMap",
+  },
+  waterways: {
+    url: "https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png",
+    attr: "© OpenSeaMap",
+  },
+} as const;
+
+function OverlayTileLayers() {
+  const map = useMap();
+  const layers = useFilterStore((s) => s.layers);
+  const tilesRef = useRef<Partial<Record<keyof typeof TILE_DEFS, L.TileLayer>>>({});
+
+  useEffect(() => {
+    (Object.keys(TILE_DEFS) as (keyof typeof TILE_DEFS)[]).forEach((key) => {
+      const on = layers[key];
+      const existing = tilesRef.current[key];
+      if (on && !existing) {
+        const { url, attr } = TILE_DEFS[key];
+        const tl = L.tileLayer(url, { attribution: attr, opacity: 0.7, maxZoom: 19 });
+        tl.addTo(map);
+        tilesRef.current[key] = tl;
+      } else if (!on && existing) {
+        map.removeLayer(existing);
+        delete tilesRef.current[key];
+      }
+    });
+  }, [layers, map]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(tilesRef.current).forEach((tl) => tl?.remove());
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return null;
+}
+
+// ── Store data loader ──────────────────────────────────────────────────────────
 function StoreLoader({
   companyId,
   filters,
@@ -37,6 +92,8 @@ function StoreLoader({
   const map = useMap();
   const controllerRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Track previous location to detect when to auto-pan
+  const prevLocationRef = useRef({ state: "", city: "" });
 
   const fetchStores = useCallback(async () => {
     controllerRef.current?.abort();
@@ -71,6 +128,20 @@ function StoreLoader({
       const stores: EnrichedStore[] = await res.json();
       onStores(stores);
       onCountChange(stores.length, stores.length);
+
+      // Auto-pan when state/city filter changes
+      const prev = prevLocationRef.current;
+      const locationChanged =
+        filters.state !== prev.state || filters.city !== prev.city;
+      if (locationChanged && stores.length > 0) {
+        const pts = stores
+          .filter((s) => s.latitude != null && s.longitude != null)
+          .map((s) => [s.latitude, s.longitude] as [number, number]);
+        if (pts.length > 0) {
+          map.fitBounds(L.latLngBounds(pts), { padding: [60, 60], maxZoom: 13 });
+        }
+        prevLocationRef.current = { state: filters.state, city: filters.city };
+      }
     } catch (err: unknown) {
       if (err instanceof Error && err.name !== "AbortError")
         console.error("Store fetch error:", err);
@@ -97,6 +168,7 @@ function StoreLoader({
   return null;
 }
 
+// ── Main MapContainer ──────────────────────────────────────────────────────────
 export default function MapContainer({ companyId }: MapContainerProps) {
   const [stores, setStores] = useState<EnrichedStore[]>([]);
   const [storeCount, setStoreCount] = useState(0);
@@ -105,26 +177,22 @@ export default function MapContainer({ companyId }: MapContainerProps) {
   const [hexLoading, setHexLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  // Zustand state
   const filters = useFilterStore((s) => s.filters);
-  const viewMode = useFilterStore((s) => s.viewMode);
   const lassoActive = useFilterStore((s) => s.lassoActive);
   const setLassoActive = useFilterStore((s) => s.setLassoActive);
   const lassoIds = useFilterStore((s) => s.lassoIds);
   const setLassoIds = useFilterStore((s) => s.setLassoIds);
   const layers = useFilterStore((s) => s.layers);
-  // h3Metric is read directly inside H3HexLayer from Zustand — no prop needed.
-  const selectedStoreId = useFilterStore((s) => s.selectedStoreId);
 
-  // Debounce filters for API calls (400ms)
+  // 150ms debounce — fast enough to feel instant, slow enough to batch rapid
+  // multi-checkbox changes without hammering the API on every keystroke.
   const [debouncedFilters, setDebouncedFilters] = useState(filters);
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedFilters(filters), 400);
+    const t = setTimeout(() => setDebouncedFilters(filters), 150);
     return () => clearTimeout(t);
   }, [filters]);
 
   const isLoading = storesLoading || hexLoading;
-  const isHeatmap = viewMode === "heatmap";
 
   const handleLassoSelection = useCallback(
     (ids: string[]) => {
@@ -133,15 +201,6 @@ export default function MapContainer({ companyId }: MapContainerProps) {
     },
     [setLassoIds, setLassoActive],
   );
-
-  const handleToggleLasso = useCallback(() => {
-    if (lassoActive) {
-      setLassoActive(false);
-    } else {
-      setLassoIds(null);
-      setLassoActive(true);
-    }
-  }, [lassoActive, setLassoActive, setLassoIds]);
 
   const handleExport = useCallback(async () => {
     const ids = lassoIds !== null ? lassoIds : stores.map((s) => s.id);
@@ -158,7 +217,9 @@ export default function MapContainer({ companyId }: MapContainerProps) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `stores-${lassoIds ? "lasso" : "filtered"}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.download = `stores-${lassoIds ? "lasso" : "filtered"}-${new Date()
+        .toISOString()
+        .slice(0, 10)}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -172,14 +233,10 @@ export default function MapContainer({ companyId }: MapContainerProps) {
     ? stores.filter((s) => lassoIds.includes(s.id))
     : stores;
 
-  const handleDeactivateLasso = useCallback(() => setLassoActive(false), [setLassoActive]);
-  void selectedStoreId; // consumed by StoreDetailDrawerController in MapPageClient
-
   return (
     <div className="relative h-full w-full">
-      {/* Loading bar */}
       {isLoading && (
-        <div className="absolute top-0 left-0 right-0 z-[1001] h-0.5 overflow-hidden">
+        <div className="absolute inset-x-0 top-0 z-[1001] h-0.5 overflow-hidden">
           <div className="h-full bg-primary animate-[loadbar_1.2s_ease-in-out_infinite]" />
         </div>
       )}
@@ -194,19 +251,23 @@ export default function MapContainer({ companyId }: MapContainerProps) {
           url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
         />
 
+        {/* Overlay reference tile layers (roads / railways / waterways) */}
+        <OverlayTileLayers />
+
         <StoreLoader
           companyId={companyId}
           filters={debouncedFilters}
           onStores={setStores}
-          onCountChange={(f, t) => { setStoreCount(f); setTotalCount(t); }}
+          onCountChange={(f, t) => {
+            setStoreCount(f);
+            setTotalCount(t);
+          }}
           onLoadingChange={setStoresLoading}
         />
 
-        {isHeatmap && layers.h3 && (
-          <H3HexLayer
-            companyId={companyId}
-            onLoadingChange={setHexLoading}
-          />
+        {/* H3 hexagons — independent of viewMode, controlled by layers.h3 toggle */}
+        {layers.h3 && (
+          <H3HexLayer companyId={companyId} onLoadingChange={setHexLoading} />
         )}
 
         {layers.stores && <StoreMarkers stores={displayStores} />}
@@ -215,7 +276,7 @@ export default function MapContainer({ companyId }: MapContainerProps) {
           isActive={lassoActive}
           stores={stores}
           onSelectionChange={handleLassoSelection}
-          onDeactivate={handleDeactivateLasso}
+          onDeactivate={() => setLassoActive(false)}
         />
       </LeafletMapContainer>
 

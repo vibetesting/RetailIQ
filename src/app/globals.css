@@ -113,17 +113,17 @@
 
 /* Store pins */
 .store-pin {
-  width: 26px; height: 26px;
+  width: 13px; height: 13px;
   border-radius: 9999px;
-  border: 2px solid white;
-  box-shadow: 0 2px 6px oklch(0 0 0 / 0.4);
+  border: 1.5px solid white;
+  box-shadow: 0 1px 4px oklch(0 0 0 / 0.45);
   transition: transform 120ms ease;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .store-pin svg { display: block; }
-.store-pin:hover { transform: scale(1.2); z-index: 1000; }
+.store-pin:hover { transform: scale(1.35); z-index: 1000; }
 
 /* Lasso */
 .lasso-svg-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 500; }

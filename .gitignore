@@ -38,3 +38,5 @@ scripts/
 
 # Supabase temp files
 supabase/.temp/
+
+.vercel

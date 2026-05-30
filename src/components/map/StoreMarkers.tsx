@@ -17,16 +17,25 @@ interface StoreMarkersProps {
   stores: EnrichedStore[];
 }
 
-function pinIcon(color: string, type: string) {
+// "unknown" and "others" get a blank grey circle — no icon to avoid visual noise.
+const BLANK_TYPES = new Set(["unknown", "others"]);
+
+function pinIcon(color: string, type: string): L.DivIcon {
+  if (BLANK_TYPES.has(type)) {
+    return L.divIcon({
+      className: "",
+      html: `<div class="store-pin" style="background:#94a3b8"></div>`,
+      iconSize: [13, 13],
+      iconAnchor: [6, 6],
+    });
+  }
   const Icon = iconForStoreType(type);
-  const svg = renderToStaticMarkup(
-    <Icon size={14} color="white" strokeWidth={2.5} />,
-  );
+  const svg = renderToStaticMarkup(<Icon size={7} color="white" strokeWidth={2.5} />);
   return L.divIcon({
     className: "",
     html: `<div class="store-pin" style="background:${color}">${svg}</div>`,
-    iconSize: [26, 26],
-    iconAnchor: [13, 13],
+    iconSize: [13, 13],
+    iconAnchor: [6, 6],
   });
 }
 
@@ -42,15 +51,17 @@ export default function StoreMarkers({ stores }: StoreMarkersProps) {
 
       const type = store.storeType?.store_type ?? "unknown";
       const color = colorForStoreType(type);
-      const typeColor = STORE_TYPE_COLORS[type] ?? STORE_TYPE_COLORS.unknown;
+      const labelColor = STORE_TYPE_COLORS[type] ?? STORE_TYPE_COLORS.unknown;
 
       const marker = L.marker([store.latitude, store.longitude], {
         icon: pinIcon(color, type),
       });
 
       marker.bindTooltip(
-        `<strong>${store.store_name}</strong><br/><span style="color:${typeColor}">${labelStoreType(type)}</span>${store.avg_rating ? ` · ★ ${store.avg_rating}` : ""}`,
-        { direction: "top", offset: [0, -8] },
+        `<strong>${store.store_name}</strong><br/>` +
+          `<span style="color:${labelColor}">${labelStoreType(type)}</span>` +
+          (store.avg_rating ? ` · ★ ${store.avg_rating}` : ""),
+        { direction: "top", offset: [0, -4] },
       );
 
       marker.on("click", () => setSelectedStoreId(store.id));
