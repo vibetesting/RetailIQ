@@ -1,14 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Activity, Map, AlertTriangle } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Activity, Map } from "lucide-react";
 import MapLayout from "@/components/map/MapLayout";
 import StoreDetailDrawer from "@/components/map/StoreDetailDrawer";
 import { useFilterStore } from "@/lib/filter-store";
-import { useDataStore } from "@/lib/data-store";
 import type { Store, StoreInsight, StoreTypeAnalysis } from "@/types";
-
-const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 interface EnrichedStore extends Store {
   insight?: StoreInsight;
@@ -16,26 +13,6 @@ interface EnrichedStore extends Store {
 }
 
 export default function MapPageClient() {
-  const allStores = useDataStore((s) => s.allStores);
-  const lastSyncedAt = useDataStore((s) => s.lastSyncedAt);
-  const syncStores = useDataStore((s) => s.syncStores);
-  const syncError = useDataStore((s) => s.syncError);
-
-  // Guard against double-firing in React Strict Mode (dev) and ensure we
-  // only sync once per mount even if the component re-renders before the
-  // Zustand persist hydration completes.
-  const syncedRef = useRef(false);
-  useEffect(() => {
-    if (syncedRef.current) return;
-    syncedRef.current = true;
-    const isStale =
-      lastSyncedAt !== null && Date.now() - lastSyncedAt > STALE_THRESHOLD_MS;
-    if (allStores === null || isStale) {
-      syncStores();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   return (
     <div className="flex h-screen flex-col bg-background">
       {/* AppTopBar */}
@@ -68,14 +45,6 @@ export default function MapPageClient() {
           ← Dashboard
         </a>
       </header>
-
-      {/* Sync error banner */}
-      {syncError && (
-        <div className="flex items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
-          <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
-          <span>Failed to load store data: {syncError}. Click <strong>Refresh</strong> on the map to retry.</span>
-        </div>
-      )}
 
       <div className="min-h-0 flex-1">
         <MapLayout />

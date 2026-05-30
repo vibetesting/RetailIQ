@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, Flame, MapPin, Lasso, X, Layers, Hexagon, RefreshCw } from "lucide-react";
+import { Download, Flame, MapPin, Lasso, X, Layers, Hexagon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -21,9 +21,6 @@ interface TopMapControlsProps {
   onExport: () => void;
   exporting: boolean;
   isLoading?: boolean;
-  onRefresh: () => void;
-  isSyncing: boolean;
-  lastSyncedAt: number | null;
 }
 
 const METRIC_LABEL: Record<H3Metric, string> = {
@@ -32,26 +29,12 @@ const METRIC_LABEL: Record<H3Metric, string> = {
   avg_rating: "Avg rating",
 };
 
-function formatSyncAge(lastSyncedAt: number | null): string {
-  if (!lastSyncedAt) return "Never synced — click to load data";
-  const diffMs = Date.now() - lastSyncedAt;
-  const diffMins = Math.floor(diffMs / 60_000);
-  if (diffMins < 1) return "Synced just now";
-  if (diffMins < 60) return `Synced ${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `Synced ${diffHours}h ago`;
-  return `Synced ${Math.floor(diffHours / 24)}d ago`;
-}
-
 export default function TopMapControls({
   storeCount,
   totalCount,
   onExport,
   exporting,
   isLoading,
-  onRefresh,
-  isSyncing,
-  lastSyncedAt,
 }: TopMapControlsProps) {
   const viewMode = useFilterStore((s) => s.viewMode);
   const setViewMode = useFilterStore((s) => s.setViewMode);
@@ -97,23 +80,38 @@ export default function TopMapControls({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-52">
             <DropdownMenuLabel>Data layers</DropdownMenuLabel>
-            <DropdownMenuCheckboxItem checked={layers.h3} onCheckedChange={() => toggleLayer("h3")}>
+            <DropdownMenuCheckboxItem
+              checked={layers.h3}
+              onCheckedChange={() => toggleLayer("h3")}
+            >
               <Hexagon className="mr-2 h-3.5 w-3.5" />
               H3 Heatmap
             </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem checked={layers.stores} onCheckedChange={() => toggleLayer("stores")}>
+            <DropdownMenuCheckboxItem
+              checked={layers.stores}
+              onCheckedChange={() => toggleLayer("stores")}
+            >
               <MapPin className="mr-2 h-3.5 w-3.5" />
               Stores
             </DropdownMenuCheckboxItem>
             <DropdownMenuSeparator />
             <DropdownMenuLabel>Reference</DropdownMenuLabel>
-            <DropdownMenuCheckboxItem checked={layers.roads} onCheckedChange={() => toggleLayer("roads")}>
+            <DropdownMenuCheckboxItem
+              checked={layers.roads}
+              onCheckedChange={() => toggleLayer("roads")}
+            >
               Roads
             </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem checked={layers.railways} onCheckedChange={() => toggleLayer("railways")}>
+            <DropdownMenuCheckboxItem
+              checked={layers.railways}
+              onCheckedChange={() => toggleLayer("railways")}
+            >
               Railways
             </DropdownMenuCheckboxItem>
-            <DropdownMenuCheckboxItem checked={layers.waterways} onCheckedChange={() => toggleLayer("waterways")}>
+            <DropdownMenuCheckboxItem
+              checked={layers.waterways}
+              onCheckedChange={() => toggleLayer("waterways")}
+            >
               Waterways
             </DropdownMenuCheckboxItem>
             <DropdownMenuSeparator />
@@ -136,7 +134,7 @@ export default function TopMapControls({
       <div className="pointer-events-auto flex items-center gap-2">
         {/* Store count */}
         <div className="flex items-center gap-2 rounded-lg border border-border bg-surface/95 px-3 py-1.5 text-xs shadow-[var(--shadow-elev-2)] backdrop-blur-md">
-          {(isLoading || isSyncing) && (
+          {isLoading && (
             <span className="flex gap-0.5">
               {[0, 1, 2].map((i) => (
                 <span
@@ -165,19 +163,6 @@ export default function TopMapControls({
             </>
           )}
         </div>
-
-        {/* Refresh / sync */}
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-9 gap-1.5 shadow-[var(--shadow-elev-1)]"
-          onClick={onRefresh}
-          disabled={isSyncing}
-          title={formatSyncAge(lastSyncedAt)}
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`} />
-          {isSyncing ? "Syncing…" : "Refresh"}
-        </Button>
 
         {/* Lasso */}
         <Button

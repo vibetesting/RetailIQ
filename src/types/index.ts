@@ -96,17 +96,3 @@ export interface FilterOptions {
   categories: string[];
   brands: string[];
 }
-
-// Full store record as cached in localStorage — base Store + storeType + inline insight.
-// Insight fields are inlined (no id/store_id) to minimise localStorage payload.
-export interface CachedStore extends Store {
-  storeType?: StoreTypeAnalysis;
-  insight?: {
-    categories: Record<string, string[]>;
-    brands: Record<string, string[]>;
-    dominant_category: string | null;
-    confidence: string | null;
-    image_count: number;
-    assets: Record<string, unknown>;
-  };
-}
