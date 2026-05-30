@@ -1,5 +1,3 @@
-"use client";
-
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { CachedStore } from "@/types";
@@ -13,33 +11,29 @@ interface DataState {
   clearCache: () => void;
 }
 
-function makeStorage() {
-  const mem = new Map<string, string>();
-  const memStorage = {
-    getItem: (k: string) => mem.get(k) ?? null,
-    setItem: (k: string, v: string) => { mem.set(k, v); },
-    removeItem: (k: string) => { mem.delete(k); },
-  };
-
-  try {
-    // Verify localStorage is accessible (throws in SSR or when blocked)
-    localStorage.getItem("__test__");
+// Safe localStorage access — returns a no-op stub during SSR.
+// createJSONStorage calls this factory lazily on each access, so the
+// typeof window check fires at the right time (client vs server).
+const storageFactory = () => {
+  if (typeof window === "undefined") {
     return {
-      getItem: (k: string) => localStorage.getItem(k),
-      setItem: (k: string, v: string) => {
-        try {
-          localStorage.setItem(k, v);
-        } catch {
-          // QuotaExceededError — in-memory state is still valid
-          console.warn("[data-store] localStorage quota exceeded — cache not persisted");
-        }
-      },
-      removeItem: (k: string) => localStorage.removeItem(k),
+      getItem: (_k: string): string | null => null,
+      setItem: (_k: string, _v: string): void => {},
+      removeItem: (_k: string): void => {},
     };
-  } catch {
-    return memStorage;
   }
-}
+  return {
+    getItem: (k: string) => localStorage.getItem(k),
+    setItem: (k: string, v: string) => {
+      try {
+        localStorage.setItem(k, v);
+      } catch {
+        console.warn("[data-store] localStorage quota exceeded — cache not persisted");
+      }
+    },
+    removeItem: (k: string) => localStorage.removeItem(k),
+  };
+};
 
 export const useDataStore = create<DataState>()(
   persist(
@@ -69,15 +63,16 @@ export const useDataStore = create<DataState>()(
     }),
     {
       name: "retailiq-data-cache",
-      storage: createJSONStorage(makeStorage),
-      // Only persist data — isSyncing/syncError are transient UI state
+      storage: createJSONStorage(storageFactory),
       partialize: (state) => ({
         allStores: state.allStores,
         lastSyncedAt: state.lastSyncedAt,
       }),
       version: 1,
-      // Version bump → wipe stale cache instead of crashing on schema mismatch
       migrate: () => ({ allStores: null, lastSyncedAt: null }),
+      // Prevent SSR/client hydration mismatch — the server never has localStorage
+      // data, so skip server-side rehydration entirely and let the client do it.
+      skipHydration: true,
     },
   ),
 );

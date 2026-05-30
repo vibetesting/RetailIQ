@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Activity, Map } from "lucide-react";
+import { Activity, Map, AlertTriangle } from "lucide-react";
 import MapLayout from "@/components/map/MapLayout";
 import StoreDetailDrawer from "@/components/map/StoreDetailDrawer";
 import { useFilterStore } from "@/lib/filter-store";
@@ -19,15 +19,20 @@ export default function MapPageClient() {
   const allStores = useDataStore((s) => s.allStores);
   const lastSyncedAt = useDataStore((s) => s.lastSyncedAt);
   const syncStores = useDataStore((s) => s.syncStores);
+  const syncError = useDataStore((s) => s.syncError);
 
-  // On mount: sync if cache is empty or stale (>24h)
   useEffect(() => {
+    // Trigger localStorage rehydration (skipped during SSR via skipHydration: true)
+    useDataStore.persist.rehydrate();
+  }, []);
+
+  useEffect(() => {
+    // Sync on mount if cache is empty or stale — runs after rehydration
     const isStale =
       lastSyncedAt !== null && Date.now() - lastSyncedAt > STALE_THRESHOLD_MS;
     if (allStores === null || isStale) {
       syncStores();
     }
-    // Intentionally runs once on mount only
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -63,6 +68,14 @@ export default function MapPageClient() {
           ← Dashboard
         </a>
       </header>
+
+      {/* Sync error banner */}
+      {syncError && (
+        <div className="flex items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+          <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>Failed to load store data: {syncError}. Click <strong>Refresh</strong> on the map to retry.</span>
+        </div>
+      )}
 
       <div className="min-h-0 flex-1">
         <MapLayout />
