@@ -194,6 +194,15 @@ export default function MapContainer({ companyId }: MapContainerProps) {
 
   const isLoading = storesLoading || hexLoading;
 
+  // Stable callback — must NOT be inline on the prop or fetchStores deps
+  // invalidate every render, causing an infinite re-fetch loop.
+  const handleCountChange = useCallback((f: number, t: number) => {
+    setStoreCount(f);
+    setTotalCount(t);
+  }, []);
+
+  const handleDeactivateLasso = useCallback(() => setLassoActive(false), [setLassoActive]);
+
   const handleLassoSelection = useCallback(
     (ids: string[]) => {
       setLassoIds(ids);
@@ -234,6 +243,7 @@ export default function MapContainer({ companyId }: MapContainerProps) {
     : stores;
 
   return (
+
     <div className="relative h-full w-full">
       {isLoading && (
         <div className="absolute inset-x-0 top-0 z-[1001] h-0.5 overflow-hidden">
@@ -258,10 +268,7 @@ export default function MapContainer({ companyId }: MapContainerProps) {
           companyId={companyId}
           filters={debouncedFilters}
           onStores={setStores}
-          onCountChange={(f, t) => {
-            setStoreCount(f);
-            setTotalCount(t);
-          }}
+          onCountChange={handleCountChange}
           onLoadingChange={setStoresLoading}
         />
 
@@ -276,7 +283,7 @@ export default function MapContainer({ companyId }: MapContainerProps) {
           isActive={lassoActive}
           stores={stores}
           onSelectionChange={handleLassoSelection}
-          onDeactivate={() => setLassoActive(false)}
+          onDeactivate={handleDeactivateLasso}
         />
       </LeafletMapContainer>
 

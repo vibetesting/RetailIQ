@@ -7,8 +7,8 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient();
 
-  const storesQ = supabase.from("stores").select("state, city");
-  if (companyId) storesQ.eq("company_id", companyId);
+  let storesQ = supabase.from("stores").select("state, city");
+  if (companyId) storesQ = storesQ.eq("company_id", companyId);
 
   const [{ data: storeRows }, { data: typeRows }, { data: insightRows }] = await Promise.all([
     storesQ,
