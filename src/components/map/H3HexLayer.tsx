@@ -7,53 +7,150 @@ import {
   h3BoundaryToLatLngs,
   viewportToH3Cells,
   getH3Resolution,
-  whitespaceColor,
-  densityColor,
+  h3ColorForNorm,
+  H3_RAMP,
 } from "@/lib/h3-utils";
-import type { H3Insight, MapLayer, ViewportBounds } from "@/types";
+import { useFilterStore, type H3Metric } from "@/lib/filter-store";
+import type { H3Insight, ViewportBounds } from "@/types";
+
+// The pane name for hexagons — sits below markerPane (600) so store pins
+// always render on top even when both layers are visible.
+const H3_PANE = "h3Pane";
+const H3_PANE_Z = 350;
 
 interface H3HexLayerProps {
   companyId?: string;
-  activeLayer: MapLayer;
   onLoadingChange?: (loading: boolean) => void;
 }
 
-export default function H3HexLayer({ companyId, activeLayer, onLoadingChange }: H3HexLayerProps) {
+// Normalise a metric value to [0, 1] for the diverging ramp.
+function makeNormalizer(metric: H3Metric, insights: H3Insight[]) {
+  if (metric === "store_count") {
+    const max = Math.max(1, ...insights.map((i) => i.store_count));
+    // Log-scale so a single very dense cell doesn't wash everything green.
+    const denom = Math.log10(max + 1) || 1;
+    return (i: H3Insight) => Math.log10((i.store_count ?? 0) + 1) / denom;
+  }
+  if (metric === "avg_rating") {
+    // Ratings are 1–5; normalise to 0–1 then invert (low rating = bad = red).
+    return (i: H3Insight) =>
+      i.avg_rating != null ? ((i.avg_rating - 1) / 4) : 0;
+  }
+  // whitespace_score — already 0–1; high score = good = green so invert for ramp.
+  return (i: H3Insight) => 1 - (i.whitespace_score ?? 0);
+}
+
+const METRIC_LABEL: Record<H3Metric, string> = {
+  store_count: "Store density",
+  avg_rating: "Avg rating",
+  whitespace_score: "Whitespace",
+};
+
+export default function H3HexLayer({
+  companyId,
+  onLoadingChange,
+}: H3HexLayerProps) {
   const map = useMap();
-  const polygonsRef = useRef<L.Polygon[]>([]);
+
+  // Read metric directly from Zustand — no prop needed.
+  const h3Metric = useFilterStore((s) => s.h3Metric);
+
+  const layerGroupRef = useRef<L.LayerGroup | null>(null);
+  const legendRef = useRef<L.Control | null>(null);
   const fetchControllerRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const rendererRef = useRef<L.Canvas | null>(null);
 
-  // Keep stable ref for callback so debounce closure doesn't go stale
-  const activeLayerRef = useRef(activeLayer);
-  useEffect(() => { activeLayerRef.current = activeLayer; }, [activeLayer]);
+  // Stable refs for closure-captured values
+  const metricRef = useRef(h3Metric);
+  useEffect(() => { metricRef.current = h3Metric; }, [h3Metric]);
   const companyIdRef = useRef(companyId);
   useEffect(() => { companyIdRef.current = companyId; }, [companyId]);
   const onLoadingRef = useRef(onLoadingChange);
   useEffect(() => { onLoadingRef.current = onLoadingChange; }, [onLoadingChange]);
 
-  const clearPolygons = useCallback(() => {
-    polygonsRef.current.forEach((p) => p.remove());
-    polygonsRef.current = [];
-  }, []);
+  // ── One-time setup: create h3Pane + canvas renderer + legend ──────────────
+  useEffect(() => {
+    // Create dedicated pane below markerPane so hexes never cover pins.
+    if (!map.getPane(H3_PANE)) {
+      const pane = map.createPane(H3_PANE);
+      pane.style.zIndex = String(H3_PANE_Z);
+      pane.style.pointerEvents = "auto";
+    }
 
+    // Single canvas renderer bound to the h3Pane — renders all polys on one
+    // <canvas> element instead of hundreds of SVG paths.
+    rendererRef.current = L.canvas({ pane: H3_PANE });
+
+    // Legend control
+    const LegendControl = L.Control.extend({
+      onAdd() {
+        const el = L.DomUtil.create("div", "h3-legend");
+        el.style.cssText =
+          "background:rgba(255,255,255,0.94);padding:6px 10px;border-radius:6px;" +
+          "font:11px/1.4 system-ui;box-shadow:0 1px 6px rgba(0,0,0,.15);min-width:140px;";
+        return el;
+      },
+    });
+    const ctrl = new LegendControl({ position: "bottomright" }) as L.Control & {
+      getContainer: () => HTMLElement;
+    };
+    ctrl.addTo(map);
+    legendRef.current = ctrl;
+
+    return () => {
+      layerGroupRef.current?.remove();
+      layerGroupRef.current = null;
+      if (legendRef.current) map.removeControl(legendRef.current);
+      legendRef.current = null;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+
+  // ── Update legend text whenever metric changes ────────────────────────────
+  useEffect(() => {
+    const ctrl = legendRef.current as (L.Control & { getContainer?: () => HTMLElement }) | null;
+    if (!ctrl) return;
+    const el = ctrl.getContainer?.();
+    if (!el) return;
+    const gradient = `linear-gradient(to right,${H3_RAMP.join(",")})`;
+    const [lo, hi] =
+      h3Metric === "store_count"
+        ? ["Low", "High"]
+        : h3Metric === "avg_rating"
+        ? ["1.0 ★", "5.0 ★"]
+        : ["Saturated", "Opportunity"];
+    el.innerHTML = `
+      <div style="font-weight:600;margin-bottom:4px">${METRIC_LABEL[h3Metric]}</div>
+      <div style="width:130px;height:8px;border-radius:4px;background:${gradient}"></div>
+      <div style="display:flex;justify-content:space-between;margin-top:2px;color:#555">
+        <span>${lo}</span><span>${hi}</span>
+      </div>`;
+  }, [h3Metric]);
+
+  // ── Core fetch + render ───────────────────────────────────────────────────
   const fetchAndRender = useCallback(async () => {
-    if (activeLayerRef.current === "stores") return;
-
     fetchControllerRef.current?.abort();
     fetchControllerRef.current = new AbortController();
 
-    const bounds = map.getBounds();
     const zoom = map.getZoom();
     const resolution = getH3Resolution(zoom);
 
+    // Below minimum zoom — clear and bail.
+    if (resolution === null) {
+      layerGroupRef.current?.clearLayers();
+      return;
+    }
+
+    const b = map.getBounds();
     const viewport: ViewportBounds = {
-      north: bounds.getNorth(),
-      south: bounds.getSouth(),
-      east: bounds.getEast(),
-      west: bounds.getWest(),
+      north: b.getNorth(),
+      south: b.getSouth(),
+      east: b.getEast(),
+      west: b.getWest(),
     };
 
+    // polygonToCells replaces the old O(n²) lat/lng grid-sampling loop.
     const cells = viewportToH3Cells(viewport, resolution);
     if (cells.length === 0) return;
 
@@ -61,64 +158,72 @@ export default function H3HexLayer({ companyId, activeLayer, onLoadingChange }: 
     try {
       const params = new URLSearchParams({
         resolution: String(resolution),
-        cells: cells.slice(0, 400).join(","),
+        cells: cells.join(","),
         ...(companyIdRef.current ? { company_id: companyIdRef.current } : {}),
       });
 
       const res = await fetch(`/api/h3?${params}`, {
         signal: fetchControllerRef.current.signal,
       });
-
       if (!res.ok) return;
+
       const insights: H3Insight[] = await res.json();
+      if (!insights.length) {
+        layerGroupRef.current?.clearLayers();
+        return;
+      }
 
-      clearPolygons();
-
+      const normalize = makeNormalizer(metricRef.current, insights);
       const insightMap = new Map(insights.map((i) => [i.h3_index, i]));
-      const maxCount = Math.max(...insights.map((i) => i.store_count), 1);
+
+      // Reuse existing layer group; clear old polygons first.
+      if (!layerGroupRef.current) {
+        layerGroupRef.current = L.layerGroup().addTo(map);
+      } else {
+        layerGroupRef.current.clearLayers();
+      }
+
+      const renderer = rendererRef.current!;
 
       cells.forEach((cell) => {
         const insight = insightMap.get(cell);
         if (!insight || insight.store_count === 0) return;
 
-        const latlngs = h3BoundaryToLatLngs(cell);
-        let fillColor = "#374151";
-        let fillOpacity = 0.55;
-        const layer = activeLayerRef.current;
-
-        if (layer === "whitespace") {
-          fillColor = whitespaceColor(insight.whitespace_score);
-        } else if (layer === "density") {
-          fillColor = densityColor(insight.store_count, maxCount);
-        } else if (layer === "brands") {
-          const topBrandCount = Object.keys(insight.brand_penetration ?? {}).length;
-          const ratio = Math.min(topBrandCount / 10, 1);
-          fillOpacity = 0.3 + ratio * 0.5;
-          fillColor = `hsl(${260 - ratio * 40}, 70%, ${60 - ratio * 20}%)`;
+        let boundary: [number, number][];
+        try {
+          boundary = h3BoundaryToLatLngs(cell);
+        } catch {
+          return; // skip invalid/edge cells
         }
 
-        const polygon = L.polygon(latlngs as [number, number][], {
-          fillColor,
-          fillOpacity,
-          color: "rgba(255,255,255,0.12)",
-          weight: 0.5,
+        const fill = h3ColorForNorm(normalize(insight));
+
+        const poly = L.polygon(boundary, {
+          color: fill,
+          weight: 1,
+          opacity: 0.85,
+          fillColor: fill,
+          fillOpacity: 0.5,
+          smoothFactor: 1,
+          pane: H3_PANE,
+          renderer,
         });
 
-        polygon.bindPopup(`
-          <div style="font-family:system-ui;min-width:168px;padding:12px 14px;">
-            <div style="font-weight:700;font-size:13px;margin-bottom:2px;">H3 Cell · r${resolution}</div>
-            <div style="font-size:11px;color:#94a3b8;font-family:monospace;margin-bottom:10px;word-break:break-all;">${cell}</div>
-            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-              <tr><td style="color:#64748b;padding:2px 0">Stores</td><td style="text-align:right;font-weight:600">${insight.store_count}</td></tr>
-              <tr><td style="color:#64748b;padding:2px 0">Avg Rating</td><td style="text-align:right;font-weight:600">${insight.avg_rating?.toFixed(1) ?? "—"}</td></tr>
-              <tr><td style="color:#64748b;padding:2px 0">Category</td><td style="text-align:right;font-weight:600;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${insight.dominant_category ?? "—"}</td></tr>
-              <tr><td style="color:#64748b;padding:2px 0">Whitespace</td><td style="text-align:right;font-weight:600">${insight.whitespace_score?.toFixed(0) ?? "—"}</td></tr>
-            </table>
-          </div>
-        `);
+        poly.bindTooltip(
+          `<div style="font-size:12px;line-height:1.5;min-width:160px">
+            <div><strong>${(insight.dominant_category ?? "—").replace(/</g, "&lt;")}</strong></div>
+            <div>Stores: <strong>${insight.store_count}</strong></div>
+            ${insight.avg_rating != null ? `<div>★ ${Number(insight.avg_rating).toFixed(2)}</div>` : ""}
+            ${insight.whitespace_score != null ? `<div>Whitespace: ${Number(insight.whitespace_score).toFixed(2)}</div>` : ""}
+            <div style="margin-top:2px;color:#888;font-size:10px">res ${resolution} · ${cell}</div>
+          </div>`,
+          { direction: "top", sticky: true, opacity: 0.95 },
+        );
 
-        polygon.addTo(map);
-        polygonsRef.current.push(polygon);
+        poly.on("mouseover", () => poly.setStyle({ fillOpacity: 0.75, weight: 2 }));
+        poly.on("mouseout", () => poly.setStyle({ fillOpacity: 0.5, weight: 1 }));
+
+        layerGroupRef.current!.addLayer(poly);
       });
     } catch (err: unknown) {
       if (err instanceof Error && err.name !== "AbortError") {
@@ -127,7 +232,7 @@ export default function H3HexLayer({ companyId, activeLayer, onLoadingChange }: 
     } finally {
       onLoadingRef.current?.(false);
     }
-  }, [map, clearPolygons]);
+  }, [map]);
 
   const debouncedFetch = useCallback(() => {
     clearTimeout(debounceRef.current);
@@ -139,14 +244,14 @@ export default function H3HexLayer({ companyId, activeLayer, onLoadingChange }: 
     zoomend: debouncedFetch,
   });
 
+  // Re-render when metric or companyId changes.
   useEffect(() => {
     fetchAndRender();
     return () => {
-      clearPolygons();
       fetchControllerRef.current?.abort();
       clearTimeout(debounceRef.current);
     };
-  }, [activeLayer, companyId, fetchAndRender, clearPolygons]);
+  }, [h3Metric, companyId, fetchAndRender]);
 
   return null;
 }

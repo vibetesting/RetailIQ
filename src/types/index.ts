@@ -1,7 +1,7 @@
 export interface Store {
   id: string;
   store_name: string;
-  place_id: string;
+  place_id: string | null;
   latitude: number;
   longitude: number;
   city: string | null;
@@ -14,6 +14,7 @@ export interface Store {
   h3_r5: string | null;
   h3_r7: string | null;
   h3_r9: string | null;
+  storeType?: StoreTypeAnalysis;
 }
 
 export interface StoreInsight {

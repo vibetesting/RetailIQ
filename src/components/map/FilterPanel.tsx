@@ -1,412 +1,392 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import type { StoreFilters, FilterOptions } from "@/types";
-import { DEFAULT_FILTERS } from "@/types";
+import { useState } from "react";
+import { RotateCcw } from "lucide-react";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { useFilterStore } from "@/lib/filter-store";
+import { ASSET_OPTIONS, CONFIDENCE_LEVELS, colorForStoreType, labelStoreType } from "@/lib/store-types";
+import { iconForStoreType } from "@/lib/store-type-icons";
+import type { FilterOptions } from "@/types";
 
 interface FilterPanelProps {
-  filters: StoreFilters;
   options: FilterOptions;
-  onChange: (filters: StoreFilters) => void;
 }
 
-const ASSETS = ["Visi Cooler", "Racks", "POSM", "Impulse Display", "Outside Display", "Bulk Storage Visible"];
-const CONFIDENCE_LEVELS = ["High", "Medium", "Low"];
+export default function FilterPanel({ options }: FilterPanelProps) {
+  const { filters, setFilter, toggleArray, reset } = useFilterStore();
 
-const STORE_TYPE_COLORS: Record<string, string> = {
-  Grocery: "bg-green-100 text-green-700",
-  Hardware: "bg-orange-100 text-orange-700",
-  Others: "bg-gray-100 text-gray-600",
-  Pharmacy: "bg-red-100 text-red-700",
-  Supermarket: "bg-blue-100 text-blue-700",
-  Unknown: "bg-gray-100 text-gray-500",
-};
-
-const STORE_TYPE_ICONS: Record<string, string> = {
-  Grocery: "🛒", Hardware: "🔧", Others: "⚙️",
-  Pharmacy: "💊", Supermarket: "🏪", Unknown: "❓",
-};
-
-export default function FilterPanel({ filters, options, onChange }: FilterPanelProps) {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({
-    categories: true,
-    brands: true,
-  });
-  const [categorySearch, setCategorySearch] = useState("");
-  const [brandSearch, setBrandSearch] = useState("");
-
-  const toggle = (section: string) =>
-    setCollapsed((c) => ({ ...c, [section]: !c[section] }));
-
-  const set = <K extends keyof StoreFilters>(key: K, value: StoreFilters[K]) =>
-    onChange({ ...filters, [key]: value });
-
-  const toggleArr = (key: "storeTypes" | "categories" | "brands" | "assets" | "confidence", val: string) => {
-    const arr = filters[key] as string[];
-    set(key, arr.includes(val) ? arr.filter((v) => v !== val) : [...arr, val]);
-  };
-
-  // Active filter chips
-  const chips = useMemo(() => {
-    const result: { label: string; onRemove: () => void }[] = [];
-    if (filters.state) result.push({ label: filters.state, onRemove: () => set("state", "") });
-    if (filters.city) result.push({ label: filters.city, onRemove: () => set("city", "") });
-    filters.storeTypes.forEach((t) => result.push({ label: t, onRemove: () => toggleArr("storeTypes", t) }));
-    if (filters.brandsIdentified !== "any") result.push({ label: `Brands: ${filters.brandsIdentified}`, onRemove: () => set("brandsIdentified", "any") });
-    if (filters.categoriesIdentified !== "any") result.push({ label: `Categories: ${filters.categoriesIdentified}`, onRemove: () => set("categoriesIdentified", "any") });
-    filters.categories.forEach((c) => result.push({ label: c, onRemove: () => toggleArr("categories", c) }));
-    filters.brands.forEach((b) => result.push({ label: b, onRemove: () => toggleArr("brands", b) }));
-    filters.assets.forEach((a) => result.push({ label: a, onRemove: () => toggleArr("assets", a) }));
-    filters.confidence.forEach((c) => result.push({ label: `${c} conf.`, onRemove: () => toggleArr("confidence", c) }));
-    if (filters.minRating !== null) result.push({ label: `≥${filters.minRating}★`, onRemove: () => set("minRating", null) });
-    if (filters.maxRating !== null) result.push({ label: `≤${filters.maxRating}★`, onRemove: () => set("maxRating", null) });
-    if (filters.minReviews !== null) result.push({ label: `≥${filters.minReviews} reviews`, onRemove: () => set("minReviews", null) });
-    return result;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters]);
-
-  const isActive = chips.length > 0;
-
-  const visibleCategories = options.categories.filter((c) =>
-    c.toLowerCase().includes(categorySearch.toLowerCase())
-  );
-  const visibleBrands = options.brands.filter((b) =>
-    b.toLowerCase().includes(brandSearch.toLowerCase())
-  );
+  const activeCount =
+    (filters.state ? 1 : 0) +
+    (filters.city ? 1 : 0) +
+    filters.storeTypes.length +
+    filters.categories.length +
+    filters.brands.length +
+    filters.assets.length +
+    filters.confidence.length +
+    (filters.minRating != null ? 1 : 0) +
+    (filters.maxRating != null ? 1 : 0) +
+    (filters.minReviews != null ? 1 : 0) +
+    (filters.brandsIdentified !== "any" ? 1 : 0) +
+    (filters.categoriesIdentified !== "any" ? 1 : 0);
 
   return (
-    <div className="w-80 flex-shrink-0 bg-white border-r border-gray-100 flex flex-col h-full shadow-[1px_0_0_0_#f1f5f9]">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3.5 border-b border-gray-100 flex-shrink-0 bg-white sticky top-0 z-10">
+    <aside className="flex h-full w-[300px] flex-col border-r border-border bg-sidebar flex-shrink-0">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
-          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-          </svg>
-          <span className="font-semibold text-sm text-gray-800">Filters</span>
-          {isActive && (
-            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] font-bold">{chips.length}</span>
+          <h2 className="text-sm font-semibold tracking-tight">Filters</h2>
+          {activeCount > 0 && (
+            <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+              {activeCount}
+            </Badge>
           )}
         </div>
-        {isActive && (
-          <button
-            onClick={() => onChange(DEFAULT_FILTERS)}
-            className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors duration-150 font-medium"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-            Reset all
-          </button>
-        )}
+        <Button variant="ghost" size="sm" onClick={reset} className="h-7 gap-1 text-xs">
+          <RotateCcw className="h-3 w-3" />
+          Reset
+        </Button>
       </div>
 
-      {/* Active filter chips */}
-      {chips.length > 0 && (
-        <div className="px-4 py-2.5 flex flex-wrap gap-1.5 border-b border-gray-100 bg-blue-50/50">
-          {chips.map((chip, i) => (
-            <span
-              key={i}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-blue-200 text-[11px] font-medium text-blue-700 shadow-sm"
-            >
-              {chip.label}
-              <button
-                onClick={chip.onRemove}
-                className="ml-0.5 text-blue-400 hover:text-blue-700 transition-colors"
-              >
-                <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Scrollable body */}
-      <div className="flex-1 overflow-y-auto">
-
-        {/* LOCATION */}
-        <Section
-          title="LOCATION"
-          collapsed={collapsed.location}
-          onToggle={() => toggle("location")}
-          badge={[filters.state, filters.city].filter(Boolean).length}
+      <div className="scrollbar-thin flex-1 overflow-y-auto px-3 py-2">
+        <Accordion
+          type="multiple"
+          defaultValue={["location", "type", "categories", "confidence"]}
+          className="space-y-1"
         >
-          <div className="space-y-2">
-            <div>
-              <label className="text-xs text-gray-400 mb-1.5 block font-medium tracking-wide uppercase">State</label>
-              <select
-                value={filters.state}
-                onChange={(e) => set("state", e.target.value)}
-                className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all duration-150"
-              >
-                <option value="">All states</option>
-                {options.states.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
+          {/* LOCATION */}
+          <Section value="location" label="Location">
+            <div className="space-y-2">
+              <div>
+                <Label className="text-xs text-muted-foreground">State</Label>
+                <Select
+                  value={filters.state || "__all"}
+                  onValueChange={(v) => setFilter("state", v === "__all" ? "" : v)}
+                >
+                  <SelectTrigger className="mt-1 h-8 text-xs">
+                    <SelectValue placeholder="All states" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">All states</SelectItem>
+                    {options.states.map((s) => (
+                      <SelectItem key={s} value={s}>{s}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground">City</Label>
+                <Select
+                  value={filters.city || "__all"}
+                  onValueChange={(v) => setFilter("city", v === "__all" ? "" : v)}
+                >
+                  <SelectTrigger className="mt-1 h-8 text-xs">
+                    <SelectValue placeholder="All cities" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">All cities</SelectItem>
+                    {options.cities.map((c) => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div>
-              <label className="text-xs text-gray-400 mb-1.5 block font-medium tracking-wide uppercase">City</label>
-              <select
-                value={filters.city}
-                onChange={(e) => set("city", e.target.value)}
-                className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all duration-150"
-              >
-                <option value="">All cities</option>
-                {options.cities.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-          </div>
-        </Section>
+          </Section>
 
-        {/* STORE TYPE */}
-        <Section
-          title="STORE TYPE"
-          collapsed={collapsed.storeType}
-          onToggle={() => toggle("storeType")}
-          badge={filters.storeTypes.length}
-          count={options.storeTypes.length}
-        >
-          <div className="space-y-0.5">
-            {options.storeTypes.map((t) => (
-              <CheckRow
-                key={t}
-                checked={filters.storeTypes.includes(t)}
-                onChange={() => toggleArr("storeTypes", t)}
-                label={t}
-                prefix={STORE_TYPE_ICONS[t] ?? "●"}
-                chipColor={STORE_TYPE_COLORS[t]}
+          {/* STORE TYPE */}
+          <Section value="type" label={`Store Type (${options.storeTypes.length})`}>
+            <div className="grid grid-cols-1 gap-1.5">
+              {options.storeTypes.length === 0 && (
+                <p className="px-1 py-2 text-[11px] italic text-muted-foreground">No store types yet.</p>
+              )}
+              {options.storeTypes.map((t) => {
+                const Icon = iconForStoreType(t);
+                const color = colorForStoreType(t);
+                return (
+                  <label
+                    key={t}
+                    className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent/40"
+                  >
+                    <Checkbox
+                      checked={filters.storeTypes.includes(t)}
+                      onCheckedChange={() => toggleArray("storeTypes", t)}
+                      className="h-3.5 w-3.5"
+                    />
+                    <span className="inline-flex items-center gap-2">
+                      <span
+                        className="flex h-5 w-5 items-center justify-center rounded-full text-white"
+                        style={{ background: color }}
+                      >
+                        <Icon className="h-3 w-3" strokeWidth={2.5} />
+                      </span>
+                      {labelStoreType(t)}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </Section>
+
+          {/* DETAILS (brands/categories identified) */}
+          <Section value="identified" label="Details">
+            <div className="space-y-2">
+              <YesNoRow
+                label="Brands identified"
+                value={filters.brandsIdentified}
+                onChange={(v) => setFilter("brandsIdentified", v)}
               />
-            ))}
-          </div>
-        </Section>
-
-        {/* IDENTIFIED */}
-        <Section title="IDENTIFIED" collapsed={collapsed.identified} onToggle={() => toggle("identified")}
-          badge={(filters.brandsIdentified !== "any" ? 1 : 0) + (filters.categoriesIdentified !== "any" ? 1 : 0)}
-        >
-          <div className="space-y-3">
-            <div>
-              <p className="text-xs text-gray-400 mb-2 font-medium uppercase tracking-wide">Brands Identified</p>
-              <TriToggle value={filters.brandsIdentified} onChange={(v) => set("brandsIdentified", v)} />
+              <YesNoRow
+                label="Categories identified"
+                value={filters.categoriesIdentified}
+                onChange={(v) => setFilter("categoriesIdentified", v)}
+              />
             </div>
-            <div>
-              <p className="text-xs text-gray-400 mb-2 font-medium uppercase tracking-wide">Categories Identified</p>
-              <TriToggle value={filters.categoriesIdentified} onChange={(v) => set("categoriesIdentified", v)} />
-            </div>
-          </div>
-        </Section>
+          </Section>
 
-        {/* CATEGORIES */}
-        <Section
-          title="CATEGORIES"
-          collapsed={collapsed.categories}
-          onToggle={() => toggle("categories")}
-          badge={filters.categories.length}
-          count={options.categories.length}
-        >
-          <div>
-            <SearchBox value={categorySearch} onChange={setCategorySearch} placeholder="Search categories..." />
-            <div className="mt-2 max-h-52 overflow-y-auto space-y-0.5 pr-1">
-              {visibleCategories.map((c) => (
-                <CheckRow key={c} checked={filters.categories.includes(c)} onChange={() => toggleArr("categories", c)} label={c} />
-              ))}
-              {visibleCategories.length === 0 && <p className="text-xs text-gray-400 py-2 text-center">No matches</p>}
-            </div>
-          </div>
-        </Section>
+          {/* CATEGORIES */}
+          <Section value="categories" label={`Categories (${options.categories.length})`}>
+            <SearchableCheckList
+              items={options.categories}
+              selected={filters.categories}
+              onToggle={(v) => toggleArray("categories", v)}
+              placeholder="Search categories…"
+              emptyText="No categories yet — run analysis to populate."
+            />
+          </Section>
 
-        {/* BRANDS */}
-        <Section
-          title="BRANDS"
-          collapsed={collapsed.brands}
-          onToggle={() => toggle("brands")}
-          badge={filters.brands.length}
-          count={options.brands.length}
-        >
-          <div>
-            <SearchBox value={brandSearch} onChange={setBrandSearch} placeholder="Search brands..." />
-            <div className="mt-2 max-h-52 overflow-y-auto space-y-0.5 pr-1">
-              {visibleBrands.map((b) => (
-                <CheckRow key={b} checked={filters.brands.includes(b)} onChange={() => toggleArr("brands", b)} label={b} />
-              ))}
-              {visibleBrands.length === 0 && <p className="text-xs text-gray-400 py-2 text-center">No matches</p>}
-            </div>
-          </div>
-        </Section>
+          {/* BRANDS */}
+          <Section value="brands" label={`Brands (${options.brands.length})`}>
+            <SearchableCheckList
+              items={options.brands}
+              selected={filters.brands}
+              onToggle={(v) => toggleArray("brands", v)}
+              placeholder="Search brands…"
+              emptyText="No brands detected yet."
+            />
+          </Section>
 
-        {/* ASSETS */}
-        <Section title="ASSETS" collapsed={collapsed.assets} onToggle={() => toggle("assets")} badge={filters.assets.length}>
-          <div className="space-y-0.5">
-            {ASSETS.map((a) => (
-              <CheckRow key={a} checked={filters.assets.includes(a)} onChange={() => toggleArr("assets", a)} label={a} />
-            ))}
-          </div>
-        </Section>
+          {/* ASSETS */}
+          <Section value="assets" label="Assets">
+            <SearchableCheckList
+              items={ASSET_OPTIONS.map((a) => a.key)}
+              labels={Object.fromEntries(ASSET_OPTIONS.map((a) => [a.key, a.label]))}
+              selected={filters.assets}
+              onToggle={(v) => toggleArray("assets", v)}
+              placeholder="Search assets…"
+              emptyText="No assets available."
+            />
+          </Section>
 
-        {/* CONFIDENCE */}
-        <Section title="CONFIDENCE" collapsed={collapsed.confidence} onToggle={() => toggle("confidence")} badge={filters.confidence.length}>
-          <div className="space-y-0.5">
+          {/* CONFIDENCE */}
+          <Section value="confidence" label="Confidence">
             {CONFIDENCE_LEVELS.map((c) => (
-              <CheckRow
+              <label
                 key={c}
-                checked={filters.confidence.includes(c.toLowerCase())}
-                onChange={() => toggleArr("confidence", c.toLowerCase())}
-                label={c}
-                dot={c === "High" ? "bg-green-400" : c === "Medium" ? "bg-amber-400" : "bg-red-400"}
-              />
+                className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent/40"
+              >
+                <Checkbox
+                  checked={filters.confidence.includes(c)}
+                  onCheckedChange={() => toggleArray("confidence", c)}
+                  className="h-3.5 w-3.5"
+                />
+                <span className="capitalize">{c}</span>
+              </label>
             ))}
-          </div>
-        </Section>
+          </Section>
 
-        {/* RATINGS & REVIEWS */}
-        <Section
-          title="RATINGS & REVIEWS"
-          collapsed={collapsed.ratings}
-          onToggle={() => toggle("ratings")}
-          badge={[filters.minRating, filters.maxRating, filters.minReviews].filter((v) => v !== null).length}
-        >
-          <div className="space-y-3">
-            <div className="flex gap-2">
-              <div className="flex-1">
-                <label className="text-xs text-gray-400 mb-1.5 block font-medium uppercase tracking-wide">Min Rating</label>
-                <input
-                  type="number" min={0} max={5} step={0.1}
-                  value={filters.minRating ?? ""}
-                  onChange={(e) => set("minRating", e.target.value ? parseFloat(e.target.value) : null)}
-                  placeholder="0"
-                  className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all duration-150"
+          {/* RATINGS & REVIEWS */}
+          <Section value="ratings" label="Ratings & Reviews">
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <NumInput
+                  label="Min rating"
+                  value={filters.minRating}
+                  onChange={(v) => setFilter("minRating", v)}
+                  step={0.1}
+                  max={5}
+                  min={0}
+                />
+                <NumInput
+                  label="Max rating"
+                  value={filters.maxRating}
+                  onChange={(v) => setFilter("maxRating", v)}
+                  step={0.1}
+                  max={5}
+                  min={0}
                 />
               </div>
-              <div className="flex-1">
-                <label className="text-xs text-gray-400 mb-1.5 block font-medium uppercase tracking-wide">Max Rating</label>
-                <input
-                  type="number" min={0} max={5} step={0.1}
-                  value={filters.maxRating ?? ""}
-                  onChange={(e) => set("maxRating", e.target.value ? parseFloat(e.target.value) : null)}
-                  placeholder="5"
-                  className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all duration-150"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-gray-400 mb-1.5 block font-medium uppercase tracking-wide">Min Reviews</label>
-              <input
-                type="number" min={0}
-                value={filters.minReviews ?? ""}
-                onChange={(e) => set("minReviews", e.target.value ? parseInt(e.target.value) : null)}
-                placeholder="0"
-                className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all duration-150"
+              <NumInput
+                label="Min reviews"
+                value={filters.minReviews}
+                onChange={(v) => setFilter("minReviews", v)}
               />
             </div>
-          </div>
-        </Section>
-
+          </Section>
+        </Accordion>
       </div>
-    </div>
+    </aside>
   );
 }
-
-// ---- Sub-components ----
 
 function Section({
-  title, children, collapsed, onToggle, badge = 0, count,
+  value,
+  label,
+  children,
 }: {
-  title: string; children: React.ReactNode; collapsed: boolean;
-  onToggle: () => void; badge?: number; count?: number;
+  value: string;
+  label: string;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="border-b border-gray-100">
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50/80 transition-colors duration-150"
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold text-gray-500 tracking-widest">{title}</span>
-          {count !== undefined && (
-            <span className="text-[10px] text-gray-400">({count})</span>
-          )}
-          {badge > 0 && (
-            <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold">
-              {badge}
-            </span>
-          )}
-        </div>
-        <svg
-          className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${collapsed ? "-rotate-90" : ""}`}
-          fill="none" stroke="currentColor" viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-      <div
-        style={{
-          maxHeight: collapsed ? 0 : 600,
-          overflow: "hidden",
-          transition: "max-height 250ms ease-out",
-        }}
-      >
-        <div className="px-4 pb-3">{children}</div>
-      </div>
-    </div>
+    <AccordionItem value={value} className="border-b-0">
+      <AccordionTrigger className="rounded-md px-2 py-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-accent/40 hover:no-underline [&>svg]:h-3.5 [&>svg]:w-3.5">
+        {label}
+      </AccordionTrigger>
+      <AccordionContent className="px-2 pb-2 pt-0">{children}</AccordionContent>
+    </AccordionItem>
   );
 }
 
-function CheckRow({
-  checked, onChange, label, prefix, chipColor, dot,
+function NumInput({
+  label,
+  value,
+  onChange,
+  ...rest
 }: {
-  checked: boolean; onChange: () => void; label: string;
-  prefix?: string; chipColor?: string; dot?: string;
-}) {
+  label: string;
+  value: number | null;
+  onChange: (v: number | null) => void;
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange">) {
   return (
-    <label className={`flex items-center gap-2.5 cursor-pointer rounded-lg px-2 py-1.5 transition-colors duration-150 ${checked ? "bg-blue-50" : "hover:bg-gray-50"}`}>
-      <div className={`w-4 h-4 rounded-md border-2 flex-shrink-0 flex items-center justify-center transition-all duration-150 ${checked ? "bg-blue-600 border-blue-600" : "border-gray-300"}`}>
-        {checked && (
-          <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-          </svg>
-        )}
-      </div>
-      {dot && <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />}
-      {prefix && !dot && <span className="text-sm flex-shrink-0">{prefix}</span>}
-      <span className={`text-sm font-medium capitalize flex-1 truncate transition-colors duration-150 ${checked ? "text-blue-700" : "text-gray-700"}`}>
-        {chipColor ? (
-          <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${chipColor}`}>{label}</span>
-        ) : label}
-      </span>
-    </label>
-  );
-}
-
-function TriToggle({ value, onChange }: { value: "any" | "yes" | "no"; onChange: (v: "any" | "yes" | "no") => void }) {
-  return (
-    <div className="flex rounded-xl overflow-hidden border border-gray-200 p-0.5 bg-gray-50 gap-0.5">
-      {(["any", "yes", "no"] as const).map((opt) => (
-        <button
-          key={opt}
-          onClick={() => onChange(opt)}
-          className={`flex-1 text-xs py-1.5 rounded-lg font-semibold transition-all duration-150 capitalize ${
-            value === opt
-              ? "bg-blue-600 text-white shadow-sm"
-              : "text-gray-500 hover:text-gray-700"
-          }`}
-        >
-          {opt.charAt(0).toUpperCase() + opt.slice(1)}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
-  return (
-    <div className="relative">
-      <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-      </svg>
-      <input
-        type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        className="w-full text-sm border border-gray-200 rounded-xl pl-8 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-all duration-150 bg-gray-50 focus:bg-white"
+    <div>
+      <Label className="text-[10px] uppercase text-muted-foreground">{label}</Label>
+      <Input
+        type="number"
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
+        className="mt-1 h-8 text-xs"
+        {...rest}
       />
+    </div>
+  );
+}
+
+function SearchableCheckList({
+  items,
+  selected,
+  onToggle,
+  placeholder,
+  emptyText,
+  labels,
+}: {
+  items: string[];
+  selected: string[];
+  onToggle: (v: string) => void;
+  placeholder: string;
+  emptyText: string;
+  labels?: Record<string, string>;
+}) {
+  const [q, setQ] = useState("");
+  const ql = q.trim().toLowerCase();
+  const filtered = ql ? items.filter((i) => (labels?.[i] ?? i).toLowerCase().includes(ql)) : items;
+  const selectedSet = new Set(selected);
+  const selectedInList = items.filter((i) => selectedSet.has(i));
+  const merged = [...selectedInList, ...filtered.filter((i) => !selectedSet.has(i))];
+
+  return (
+    <div className="space-y-1.5">
+      <Input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={placeholder}
+        className="h-7 text-xs"
+      />
+      {selected.length > 0 && (
+        <div className="flex items-center justify-between px-1 text-[10px] text-muted-foreground">
+          <span>{selected.length} selected</span>
+          <button
+            type="button"
+            className="hover:text-foreground"
+            onClick={() => selected.forEach((v) => onToggle(v))}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+      <div className="scrollbar-thin max-h-44 overflow-y-auto pr-1">
+        {items.length === 0 && (
+          <p className="px-1 py-2 text-[11px] italic text-muted-foreground">{emptyText}</p>
+        )}
+        {items.length > 0 && merged.length === 0 && (
+          <p className="px-1 py-2 text-[11px] italic text-muted-foreground">No matches.</p>
+        )}
+        {merged.map((v) => (
+          <label
+            key={v}
+            className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent/40"
+          >
+            <Checkbox
+              checked={selectedSet.has(v)}
+              onCheckedChange={() => onToggle(v)}
+              className="h-3.5 w-3.5"
+            />
+            <span className="select-none">{labels?.[v] ?? v}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function YesNoRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: "any" | "yes" | "no";
+  onChange: (v: "any" | "yes" | "no") => void;
+}) {
+  const opts: { v: "any" | "yes" | "no"; l: string }[] = [
+    { v: "any", l: "Any" },
+    { v: "yes", l: "Yes" },
+    { v: "no", l: "No" },
+  ];
+  return (
+    <div className="space-y-1">
+      <Label className="text-[10px] uppercase text-muted-foreground">{label}</Label>
+      <div className="inline-flex w-full rounded-md border border-border bg-background p-0.5">
+        {opts.map((o) => (
+          <button
+            key={o.v}
+            type="button"
+            onClick={() => onChange(o.v)}
+            className={`flex-1 rounded px-2 py-1 text-[11px] font-medium transition-colors ${
+              value === o.v
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent/40"
+            }`}
+          >
+            {o.l}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

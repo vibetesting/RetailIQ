@@ -45,7 +45,7 @@ Example:
 | Backend | Supabase |
 | Workflow Engine | n8n |
 | AI | OpenAI GPT-4o |
-| Spatial | H3 |
+| Spatial | [H3](https://github.com/uber/h3) |
 
 ## High-Level Architecture
 

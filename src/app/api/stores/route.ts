@@ -66,7 +66,15 @@ export async function GET(request: NextRequest) {
     selectedConfidence.length > 0;
 
   if (!needsTypeFilter && !needsInsightFilter) {
-    return NextResponse.json(stores);
+    const storeIds2 = stores.map((s) => s.id);
+    const { data: typeRows2 } = await supabase
+      .from("store_type_analysis")
+      .select("store_id, store_type, weighted_scores, confidence")
+      .in("store_id", storeIds2);
+    const typeMap2 = new Map((typeRows2 ?? []).map((r) => [r.store_id, r]));
+    return NextResponse.json(
+      stores.map((s) => ({ ...s, storeType: typeMap2.get(s.id) ?? undefined })),
+    );
   }
 
   const storeIds = stores.map((s) => s.id);
@@ -125,7 +133,22 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json(stores.filter((s) => keepIds.has(s.id)));
+  const filtered = stores.filter((s) => keepIds.has(s.id));
+
+  // Attach store_type_analysis for pin coloring
+  const filteredIds = filtered.map((s) => s.id);
+  const { data: typeRows } = await supabase
+    .from("store_type_analysis")
+    .select("store_id, store_type, weighted_scores, confidence")
+    .in("store_id", filteredIds);
+  const typeMap = new Map((typeRows ?? []).map((r) => [r.store_id, r]));
+
+  return NextResponse.json(
+    filtered.map((s) => ({
+      ...s,
+      storeType: typeMap.get(s.id) ?? undefined,
+    })),
+  );
 }
 
 function flattenJsonb(jsonb: unknown): string[] {

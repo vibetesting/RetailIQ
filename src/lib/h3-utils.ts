@@ -1,64 +1,77 @@
-import { cellToBoundary, latLngToCell } from "h3-js";
+import { cellToBoundary, latLngToCell, polygonToCells } from "h3-js";
 import type { ViewportBounds } from "@/types";
 
 export { cellToBoundary, latLngToCell };
 
-export function getH3Resolution(zoom: number): number {
-  if (zoom <= 10) return 5;
-  if (zoom <= 12) return 6;
-  if (zoom <= 14) return 7;
-  if (zoom <= 16) return 8;
-  return 9;
+// Resolution table (from h3geo.org/docs/core-library/restable):
+// r4 = 1,770 km²  (country)
+// r5 =   252 km²  (state/region)
+// r6 =    36 km²  (metro area)
+// r7 =   5.2 km²  (city district)
+// r8 =  0.74 km²  (neighbourhood)
+// r9 =  0.11 km²  (street block)
+//
+// Rule of thumb: show hexes only when zoom ≥ 6 (country view is too crowded at r4).
+// Return null to signal "don't render at all".
+export function getH3Resolution(zoom: number): number | null {
+  if (zoom < 6)   return null; // continent/country — too many cells
+  if (zoom <= 7)  return 5;    // region / state
+  if (zoom <= 9)  return 6;    // metro area
+  if (zoom <= 11) return 7;    // city district  ← was stuck at r5 up to zoom 10
+  if (zoom <= 13) return 8;    // neighbourhood
+  return 9;                    // street block
 }
 
-export function h3BoundaryToLatLngs(
-  h3Index: string
-): [number, number][] {
-  const boundary = cellToBoundary(h3Index);
-  return boundary.map(([lat, lng]) => [lat, lng]);
-}
-
-// Sample step sized to ~60% of each resolution's avg edge length for good
-// coverage. If the viewport is extremely large (country-level zoom), return
-// empty so we don't freeze the browser — hexagons are invisible at that scale.
-const RESOLUTION_STEP: Record<number, number> = {
-  5: 0.06,   // r5 edge ~9 km ≈ 0.08°
-  6: 0.018,  // r6 edge ~3 km ≈ 0.027°
-  7: 0.008,  // r7 edge ~1.3 km ≈ 0.012°
-  8: 0.003,  // r8 edge ~0.5 km ≈ 0.004°
-  9: 0.001,  // r9 edge ~0.18 km ≈ 0.0015°
-};
-const MAX_GRID_ITER = 200_000;
+// Use h3-js polygonToCells (centroid-containment) instead of the old O(n²)
+// grid-sampling loop. polygonToCells is the canonical H3 API for viewport
+// coverage — it's faster, gap-free, and doesn't need hand-tuned step sizes.
+//
+// Safety cap: if the polygon covers too many cells at the requested resolution
+// (e.g. user has zoomed out quickly), fall back one level coarser rather than
+// silently returning nothing.
+const MAX_CELLS = 500;
 
 export function viewportToH3Cells(
   bounds: ViewportBounds,
-  resolution: number
+  resolution: number,
 ): string[] {
-  const step = RESOLUTION_STEP[resolution] ?? 0.06;
-  const cols = Math.ceil((bounds.east - bounds.west) / step);
-  const rows = Math.ceil((bounds.north - bounds.south) / step);
-  if (cols * rows > MAX_GRID_ITER) return []; // viewport too large, skip
-  const cells = new Set<string>();
-  for (let lat = bounds.south; lat <= bounds.north; lat += step) {
-    for (let lng = bounds.west; lng <= bounds.east; lng += step) {
-      cells.add(latLngToCell(lat, lng, resolution));
-    }
+  // polygonToCells expects a closed [lat, lng] ring
+  const ring: [number, number][] = [
+    [bounds.north, bounds.west],
+    [bounds.north, bounds.east],
+    [bounds.south, bounds.east],
+    [bounds.south, bounds.west],
+    [bounds.north, bounds.west],
+  ];
+
+  let cells = polygonToCells(ring, resolution);
+
+  // If the viewport is still too large, step up one resolution level
+  if (cells.length > MAX_CELLS && resolution > 4) {
+    cells = polygonToCells(ring, resolution - 1);
   }
-  return Array.from(cells);
+
+  return cells.slice(0, MAX_CELLS);
 }
 
-export function whitespaceColor(score: number | null): string {
-  if (score === null) return "#374151";
-  if (score >= 75) return "#10b981"; // green — high opportunity
-  if (score >= 50) return "#f59e0b"; // amber — medium
-  if (score >= 25) return "#ef4444"; // red — low
-  return "#6b7280"; // gray — saturated
+// cellToBoundary already returns [lat, lng][] — just cast, no allocation.
+export function h3BoundaryToLatLngs(h3Index: string): [number, number][] {
+  return cellToBoundary(h3Index) as [number, number][];
 }
 
-export function densityColor(count: number, max: number): string {
-  const ratio = max > 0 ? count / max : 0;
-  if (ratio >= 0.75) return "#312e81";
-  if (ratio >= 0.5) return "#4338ca";
-  if (ratio >= 0.25) return "#6366f1";
-  return "#a5b4fc";
+// Diverging RAG ramp (green → amber → red) used for all H3 metrics.
+// Matches Lovable's H3HeatmapLayer for visual consistency.
+export const H3_RAMP = [
+  "#16a34a", // green-600  — low density / high whitespace
+  "#65a30d", // lime-600
+  "#ca8a04", // yellow-600
+  "#ea580c", // orange-600
+  "#dc2626", // red-600    — high density / low whitespace
+  "#991b1b", // red-800
+] as const;
+
+export function h3ColorForNorm(norm: number): string {
+  if (!isFinite(norm)) return H3_RAMP[0];
+  const v = Math.max(0, Math.min(0.9999, norm));
+  return H3_RAMP[Math.floor(v * H3_RAMP.length)];
 }
