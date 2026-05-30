@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { RotateCcw } from "lucide-react";
 import {
   Accordion,
@@ -21,15 +21,23 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useFilterStore } from "@/lib/filter-store";
+import { useDataStore } from "@/lib/data-store";
+import { deriveFilterOptions } from "@/lib/client-filter";
 import { ASSET_OPTIONS, CONFIDENCE_LEVELS, colorForStoreType, labelStoreType } from "@/lib/store-types";
 import { iconForStoreType } from "@/lib/store-type-icons";
 import type { FilterOptions } from "@/types";
 
-interface FilterPanelProps {
-  options: FilterOptions;
-}
+const EMPTY_OPTIONS: FilterOptions = {
+  states: [], cities: [], storeTypes: [], categories: [], brands: [],
+};
 
-export default function FilterPanel({ options }: FilterPanelProps) {
+export default function FilterPanel() {
+  const allStores = useDataStore((s) => s.allStores);
+  // Derived from cache — recomputes only when allStores identity changes, not on filter changes
+  const options = useMemo(
+    () => (allStores ? deriveFilterOptions(allStores) : EMPTY_OPTIONS),
+    [allStores],
+  );
   const { filters, setFilter, toggleArray, reset } = useFilterStore();
 
   const activeCount =

@@ -5,7 +5,10 @@ import { Activity, Map } from "lucide-react";
 import MapLayout from "@/components/map/MapLayout";
 import StoreDetailDrawer from "@/components/map/StoreDetailDrawer";
 import { useFilterStore } from "@/lib/filter-store";
+import { useDataStore } from "@/lib/data-store";
 import type { Store, StoreInsight, StoreTypeAnalysis } from "@/types";
+
+const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 interface EnrichedStore extends Store {
   insight?: StoreInsight;
@@ -13,6 +16,21 @@ interface EnrichedStore extends Store {
 }
 
 export default function MapPageClient() {
+  const allStores = useDataStore((s) => s.allStores);
+  const lastSyncedAt = useDataStore((s) => s.lastSyncedAt);
+  const syncStores = useDataStore((s) => s.syncStores);
+
+  // On mount: sync if cache is empty or stale (>24h)
+  useEffect(() => {
+    const isStale =
+      lastSyncedAt !== null && Date.now() - lastSyncedAt > STALE_THRESHOLD_MS;
+    if (allStores === null || isStale) {
+      syncStores();
+    }
+    // Intentionally runs once on mount only
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="flex h-screen flex-col bg-background">
       {/* AppTopBar */}
